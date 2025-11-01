@@ -21,24 +21,25 @@ This repository contains the automation pipeline and runners used to test how co
    cd <repo-name>
 Create and activate a virtualenv (PowerShell):
 
-powershell
-Copy code
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+   ```powershell
+
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
 Place your extension packages (XPI for Firefox, CRX or unpacked folder for Chromium) into extensions/firefox/ and extensions/chromium/ and update matrix.yaml to point to those paths.
 
 Run the pipeline (example — manual Firefox runner):
 
-powershell
-Copy code
-python pipeline.py
+   ```powershell
+   python pipeline.py
 To resume from a specific extension or link:
 
-powershell
-Copy code
-python pipeline.py --start-extension "Perkspot" --start-link 1
-matrix.yaml keys
+   ```powershell
+   python pipeline.py --start-extension "Perkspot" --start-link 1
+
+
+## Matrix.yaml keys
+
 master_workbook — path to the input workbook (template).
 
 output_workbook — path where agent_output.xlsx will be written.
