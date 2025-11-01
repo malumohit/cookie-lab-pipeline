@@ -1,0 +1,115 @@
+# matrix.yaml
+master_workbook: "C:\\cookie-lab\\Mohit Cookie Stuffing File .xlsx"
+output_workbook: "C:\\cookie-lab\\agent_output.xlsx"
+
+browsers:
+  - name: firefox
+
+  - name: chrome           # uses default chrome.exe
+  - name: edge             # uses default msedge.exe
+
+  - name: brave            # set binary if not on PATH:
+    binary: "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+
+  - name: opera
+    binary: "C:\\Users\\<YOU>\\AppData\\Local\\Programs\\Opera\\opera.exe"
+
+extensions:
+  - name: Honey
+    version: 12.8.4
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\honey.xpi"
+  - name: Rakuten
+    version: 5.67.3
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\ebates-5.67.3.xpi"
+  - name: Avast Safeprice
+    version: 23.1.1694
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\avast_safeprice-23.1.1694.xpi"
+  - name: Befrugal
+    version: 2025.6.235.0
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\befrugal_automatic_coupons-2025.6.235.0.xpi"
+  - name: Couponbirds
+    version: 4.4.5
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\couponbirds_smartcoupon_finder-4.4.5.xpi"
+  - name: Couponcabin
+    version: 3.5.1.0
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\couponcabin-3.5.1.0.xpi"
+  - name: Hoopla
+    version: 1.0.34
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\hoopla-1.0.34.xpi"
+  - name: Invisiblehand
+    version: 14.22
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\invisiblehand-14.22.xpi"
+  - name: Joko
+    version: 2.1.85
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\joko-2.1.85.xpi"
+  - name: Karma Shopping
+    version: 10.71.2
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\karma_shopping_assistance-10.71.2.xpi"
+  - name: Lovedeals
+    version: 2.6.5
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\lovedeals_ai-2.6.5.xpi"
+  - name: Mino
+    version: 4.30.1
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\mino_automatic_coupons-4.30.1.xpi"
+  - name: Moolah
+    version: 1.6.6
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\moolah_automatic_coupon-1.6.6.xpi"
+  - name: Perkspot
+    version: 36.4.3
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\perkspot_save_while_you_shop-36.4.3.xpi"
+  - name: Picodi
+    version: 1.0.23
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\picodi_com_cashback-1.0.23.xpi"
+  - name: Priceblink
+    version: 8.66
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\priceblink_price_comp_coupons-8.66.xpi"
+  - name: Refermate
+    version: 2.0.10
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\refermate_anywhere-2.0.10.xpi"
+  - name: Retailmenot
+    version: 4.15.0
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\retailmenot-4.15.0.xpi"
+  - name: Simplycodes
+    version: 2.5.3
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\simplycodes-2.5.3.xpi"
+  - name: Topcashback
+    version: 7.0.2.0
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\topcashback_cashback_coupons-7.0.2.0.xpi"
+  - name: Wikibuy
+    version: 0.1.1219
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\wikibuy_for_firefox-0.1.1219.xpi"
+  - name: Worthepenny
+    version: 2.2.0
+    # ABSOLUTE path to the .xpi on your machine
+    path: "C:\\cookie-lab\\extensions\\worthepenny_automatic_coupons-2.2.0.xpi"
+
+links:
+  - "https://www.newegg.com/amd-ryzen-7-5700x3d-ryzen-7-5000-series-vermeer-zen-3-socket-am4/p/N82E16819113812?srsltid=AfmBOopcTB8eTCCNaNUO-eKMt3dKeIBmk0dwsszH-Ec1CUxXlQcHhB31&utm_medium=affiliate&utm_campaign=afc-ran-com-_-Linus+Tech+Tips&utm_source=afc-Linus+Tech+Tips&AFFID=3641906&AFFNAME=Linus+Tech+Tips&ACRID=1&ASUBID=geniuslink&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3641906&ranSiteID=odkoVVpgbeM-5Xogvs7apNxqa7vDXX.9YQ" 
+  - "https://www.newegg.com/corsair-cx-series-atx-650-w-80-plus-bronze-certified-power-supplies-cx650/p/N82E16817139322?utm_medium=affiliate&ranMID=44583&utm_campaign=afc-ran-com-_-Linus%20Tech%20Tips&srsltid=AfmBOorEwtj3deh3hX7xrrTjNyiRVy_5cw-2UPqSpyKqa1vAkEf4gJlY&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranEAID=3641906&ranSiteID=odkoVVpgbeM-4UZKWOc3Img76EmeQ7AmyA&ASUBID=geniuslink&ACRID=1&AFFNAME=Linus%20Tech%20Tips&AFFID=3641906&utm_source=afc-Linus%20Tech%20Tips"
+  - "https://www.newegg.com/zotac-gaming-zt-d40600h-10m-geforce-rtx-4060-8gb-graphics-card-double-fans/p/N82E16814500565?utm_medium=affiliate&AFFNAME=Linus%20Tech%20Tips&utm_campaign=afc-ran-com-_-Linus%20Tech%20Tips&ACRID=1&ASUBID=geniuslink&srsltid=AfmBOor60ydTnIZKeq8cD_iQtUEGN7k9r6MV_dkteJmu8DPiDDFVXNW-&ASID=https%3A%2F%2Fwww.youtube.com%2F&utm_source=afc-Linus%20Tech%20Tips&ranSiteID=odkoVVpgbeM-ALyXSSLTHhQLIvx4HBBuIA&ranEAID=3641906&ranMID=44583&AFFID=3641906"
+  - "https://www.newegg.com/gigabyte-atx-motherboards-amd-x870-am5/p/N82E16813145522?utm_medium=affiliate&AFFNAME=Linus%20Tech%20Tips&utm_campaign=afc-ran-com-_-Linus%20Tech%20Tips&ACRID=1&ASUBID=geniuslink&srsltid=AfmBOoqVbzWWJ2uuwAIufrm0jPvNmyc2sYAtY3HPr1aNXtLJpFgO3huX&ASID=https%3A%2F%2Fwww.youtube.com%2F&utm_source=afc-Linus%20Tech%20Tips&ranSiteID=odkoVVpgbeM-7XsqpDnsorsNvB2W_Nhs7w&ranEAID=3641906&ranMID=44583&AFFID=3641906"
+  - "https://www.newegg.com/kingston-500gb-nv2-nvme/p/N82E16820242729?srsltid=AfmBOopc7CUc1bacHzZo4KCwpiLzQ_RrHtl9fR9uMBnHOHCO-SnmNyOS&utm_medium=affiliate&utm_campaign=afc-ran-com-_-Linus+Tech+Tips&utm_source=afc-Linus+Tech+Tips&AFFID=3641906&AFFNAME=Linus+Tech+Tips&ACRID=1&ASUBID=geniuslink&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3641906&ranSiteID=odkoVVpgbeM-7_kCfBOuWKX5svlDRPSmJQ"
+  - "https://www.newegg.com/g-skill-ripjaws-v-series-16gb-ddr4-3600-cas-latency-cl18-desktop-memory-black/p/N82E16820232882?utm_source=afc-Linus%20Tech%20Tips&ranMID=44583&utm_medium=affiliate&utm_campaign=afc-ran-com-_-Linus%20Tech%20Tips&srsltid=AfmBOoqnOpJtE5DpVgLnWQwtQ4QvleAHcJzdSLrXWHKArci_eCSkjYkO&AFFID=3641906&ranSiteID=odkoVVpgbeM-FSNvSYU_lybbjlNGyELW6w&AFFNAME=Linus%20Tech%20Tips&ranEAID=3641906&ASUBID=geniuslink&ACRID=1&ASID=https%3A%2F%2Fwww.youtube.com%2F"
+  - "https://www.newegg.com/deepcool-micro-atx-tower-abs-spcc-tempered-glass-computer-case-black-matrexx-40-3fs/p/N82E16811853101?nrtv_cid=mazrxo8ze6kwp&utm_campaign=afc-howl-LMG%20-%20ShortCircuit-mazrxo8ze6kwp&utm_medium=affiliate&utm_source=howl-LMG%20-%20ShortCircuit"
+  # add more links here...

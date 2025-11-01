@@ -1,0 +1,17 @@
+# Fill these two fields before running:
+job_id: "job-newegg-001"
+
+browser: "firefox"
+extension_name: "Honey"
+extension_version: "unknown"
+
+# Absolute path to your Firefox .xpi:
+extension_path: "C:\\cookie-lab\\extensions\\honey.xpi"
+
+# One affiliate link to test (use any one you want):
+affiliate_link: "https://www.newegg.com/amd-ryzen-7-5700x3d-ryzen-7-5000-series-vermeer-zen-3-socket-am4/p/N82E16819113812"
+
+merchant: "www.newegg.com"
+
+# Leave empty for now (we’ll add coupon popup info later)
+extension_cfg: {}
