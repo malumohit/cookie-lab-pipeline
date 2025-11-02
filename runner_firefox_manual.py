@@ -56,7 +56,7 @@ def _get_nav_marker(driver):
         return None
 
 # NEW: observe redirect/refresh + tabs for a short window right after pressing the extension button
-def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
+def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0)):
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs = []
@@ -305,6 +305,7 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Status": "SUCCESS",
         "Failure Reason": "",
         "Notes": f"CookieComparisonRow=1; Tabs={len(new_tabs)}",
+        "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),  # <-- NEW (optional)
     }
 
     append_cookie_comparison(out_workbook, wide)
