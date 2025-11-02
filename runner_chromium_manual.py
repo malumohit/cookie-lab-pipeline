@@ -1,11 +1,11 @@
 # runner_chromium_manual.py — manual-browse runner for Chrome/Edge/Brave/Opera
-import time, hashlib, os
+import time, hashlib, tempfile, shutil, os
 from urllib.parse import urlparse, unquote
 from pathlib import Path
 from datetime import datetime
 
-from selenium.common.exceptions import NoSuchWindowException, WebDriverException
 from selenium import webdriver
+from selenium.common.exceptions import NoSuchWindowException
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.edge.options import Options as EdgeOptions
 
@@ -23,9 +23,12 @@ TARGET_ORDER = [
     "NV_ECM_TK_LC",
 ]
 TARGET_SET = set(TARGET_ORDER)
+CHROMIUM_FAMILY = ("chrome", "edge", "brave", "opera")
+
 
 def _h(v: str) -> str:
     return hashlib.sha256((v or "").encode("utf-8")).hexdigest()[:16]
+
 
 def _cookie_frame_full(c: dict) -> dict:
     return {
@@ -40,6 +43,7 @@ def _cookie_frame_full(c: dict) -> dict:
         "sameSite": c.get("sameSite"),
     }
 
+
 def _snapshot_targets(cookies):
     out = {}
     for c in cookies:
@@ -48,77 +52,82 @@ def _snapshot_targets(cookies):
             out[n] = {"value": c["value"], "hash": c["value_hash"]}
     return out
 
+
 def _ensure_window_open(driver):
-    """Guarantee at least one open window before nav/cookie access."""
+    """Guarantee at least one open window for nav/cookie ops."""
     try:
         handles = driver.window_handles
         if not handles:
-            driver.switch_to.new_window('window')
+            driver.switch_to.new_window("window")
             return
         driver.switch_to.window(handles[0])
     except Exception:
         try:
-            driver.switch_to.new_window('window')
+            driver.switch_to.new_window("window")
         except Exception:
             pass
 
-def _mk_chromium_driver(browser_name: str, extension_path: str | None, binary_path: str | None):
-    b = browser_name.lower()
-    # Decide engine & options
+
+def _mk_chromium_driver(browser_name: str,
+                        extension_path: str | None,
+                        binary_path: str | None,
+                        profile_dir: Path | None):
+    """Create a Chrome/Edge/Brave/Opera driver with optional extension + clean profile."""
+    b = (browser_name or "chrome").lower()
+
+    def _apply_common(opts):
+        # Clean, isolated temporary profile
+        if profile_dir:
+            opts.add_argument(f"--user-data-dir={str(profile_dir)}")
+            opts.add_argument("--no-first-run")
+            opts.add_argument("--no-default-browser-check")
+        # Stability flags (esp. in VMs/CI)
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--no-sandbox")
+        # Load extension (unpacked dir or .crx)
+        if extension_path:
+            if os.path.isdir(extension_path):
+                opts.add_argument(f"--load-extension={extension_path}")
+            elif extension_path.lower().endswith(".crx"):
+                opts.add_extension(extension_path)
+            else:
+                print(f"[WARN] Unknown extension path type for Chromium: {extension_path}")
+
     if b == "edge":
         opts = EdgeOptions()
-        # allow extension loading
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--no-sandbox")
-        # Load extension
-        if extension_path:
-            if os.path.isdir(extension_path):
-                opts.add_argument(f"--load-extension={extension_path}")
-            elif extension_path.lower().endswith(".crx"):
-                opts.add_extension(extension_path)
-            else:
-                print(f"[WARN] Edge: unknown extension type: {extension_path}")
-        driver = webdriver.Edge(options=opts)
-        return driver
-    else:
-        # Chrome / Brave / Opera use Chrome driver API with different binaries
-        opts = ChromeOptions()
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--no-sandbox")
-        if binary_path:
-            opts.binary_location = binary_path
-        # Load extension
-        if extension_path:
-            if os.path.isdir(extension_path):
-                opts.add_argument(f"--load-extension={extension_path}")
-            elif extension_path.lower().endswith(".crx"):
-                opts.add_extension(extension_path)
-            elif extension_path.lower().endswith(".zip"):
-                # unpacked zip is not supported directly; user should unzip
-                print(f"[WARN] Unzip {extension_path} and use the folder path with --load-extension")
-            else:
-                print(f"[WARN] Chrome: unknown extension type: {extension_path}")
-        driver = webdriver.Chrome(options=opts)
-        return driver
+        _apply_common(opts)
+        return webdriver.Edge(options=opts)
+
+    # Chrome / Brave / Opera use Chrome driver API with different binaries if provided
+    opts = ChromeOptions()
+    if binary_path:
+        opts.binary_location = binary_path
+    _apply_common(opts)
+    return webdriver.Chrome(options=opts)
+
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     """
     Manual flow (Chromium family):
-      1) Launch target Chromium browser with (optional) extension.
+      1) Launch target Chromium browser with (optional) extension in a fresh temp profile.
       2) Open affiliate link; YOU browse to checkout.
       3) On checkout, press 'y' to take BEFORE snapshot.
       4) Click extension popup; press ENTER to take AFTER snapshot + log new tabs.
     """
     browser = (job.get("browser") or "chrome").lower()
+    assert browser in CHROMIUM_FAMILY, f"Unsupported Chromium browser: {browser}"
+
     ext_ordinal = job.get("extension_ordinal", 0)
     prefix = f"{ext_ordinal}." if ext_ordinal else ""
     extension_path = job.get("extension_path")
-    binary_path = job.get("browser_binary")  # optional custom exe path
+    binary_path = job.get("browser_binary")  # optional from matrix.yaml
 
-    # Create driver
-    driver = _mk_chromium_driver(browser, extension_path, binary_path)
+    # Fresh temporary profile (isolated cookies/cache)
+    profile_dir = Path(tempfile.mkdtemp(prefix=f"{browser}_profile_"))
+
+    driver = _mk_chromium_driver(browser, extension_path, binary_path, profile_dir)
     try:
-        # Navigate (2 attempts if window vanishes)
+        # Navigate to link; retry once if window vanished
         url = job["affiliate_link"]
         for attempt in (1, 2):
             try:
@@ -131,7 +140,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                         driver.quit()
                     except Exception:
                         pass
-                    driver = _mk_chromium_driver(browser, extension_path, binary_path)
+                    driver = _mk_chromium_driver(browser, extension_path, binary_path, profile_dir)
                     continue
                 else:
                     raise
@@ -140,7 +149,6 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         print("Please navigate to CHECKOUT (log in / guest as needed).")
         print("When you are at CHECKOUT, type 'y' + Enter. Type 's' to skip.")
 
-        before_coupon_cookies = None
         try:
             caps = driver.capabilities or {}
             browser_version = caps.get("browserVersion") or caps.get("version") or ""
@@ -148,6 +156,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             browser_version = ""
         domain = urlparse(driver.current_url or url).netloc
 
+        before_coupon_cookies = None
         while True:
             try:
                 ans = input("Are you at CHECKOUT now? [y]es / [s]kip / [n]o: ").strip().lower()
@@ -171,6 +180,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                     domain = urlparse(driver.current_url or url).netloc
                 except Exception:
                     domain = urlparse(url).netloc
+
                 print("Skipping coupon step for this run as requested.")
                 after_coupon_cookies = before_coupon_cookies
                 new_tabs = []
@@ -190,7 +200,8 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             input()
         except Exception:
             pass
-        time.sleep(5)  # let background tabs spawn
+
+        time.sleep(5)  # allow background tabs to open
         post_handles = set(driver.window_handles)
         new_handles = list(post_handles - pre_handles)
         new_tabs = []
@@ -200,6 +211,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 new_tabs.append({"title": driver.title or "", "url": driver.current_url or ""})
             except Exception:
                 new_tabs.append({"title": "", "url": ""})
+
         # switch back
         try:
             orig = list(pre_handles)[0]
@@ -218,6 +230,12 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             driver.quit()
         except Exception:
             pass
+        # remove temp profile dir
+        try:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+        except Exception:
+            pass
+
 
 def _write_all(job, src_workbook, out_workbook, browser, browser_version, domain,
                before_cookies, after_cookies, new_tabs, prefix):
@@ -247,7 +265,7 @@ def _write_all(job, src_workbook, out_workbook, browser, browser_version, domain
             wide[f"{ck} (Before, Decoded)"] = unquote(before_targets.get(ck, {}).get("value", "") or "")
             wide[f"{ck} (After, Decoded)"] = unquote(after_targets.get(ck, {}).get("value", "") or "")
 
-    # diffs for Diagnostics + counts
+    # diffs + counts
     def key(c): return (c["name"], c["domain"], c["path"])
     bmap = {key(c): c for c in before_cookies}
     amap = {key(c): c for c in after_cookies}
@@ -322,5 +340,6 @@ def _write_all(job, src_workbook, out_workbook, browser, browser_version, domain
             "After Hash": tab.get("url", ""),
             "Observed At": ts,
         })
+
     append_diagnostics(out_workbook, diag_rows)
     print(f"✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison ({browser}).")
