@@ -53,10 +53,10 @@ def _get_nav_marker(driver):
 # NEW
 def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))):
     # If we didn't detect a same-tab redirect, promote first new-tab URL as redirect
-redirect_url_final = redirect_url
-if not redirect_url_final and new_tabs:
-    first = new_tabs[0]
-    redirect_url_final = first.get("url", "")
+    redirect_url_final = redirect_url
+    if not redirect_url_final and new_tabs:
+        first = new_tabs[0]
+        redirect_url_final = first.get("url", "")
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs = []
