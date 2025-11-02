@@ -1,133 +1,106 @@
-# excel_writer.py (adds Cookie Field Comparison wide-sheet writer)
+# excel_writer.py — openpyxl-only writer (no pandas)
 from pathlib import Path
-import pandas as pd
-import time, os, shutil
-from tempfile import NamedTemporaryFile
-from openpyxl import load_workbook
+from datetime import datetime
+from typing import Dict, List
 
-MAX_RETRIES = 8
-SLEEP_SECONDS = 0.75
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
-def _atomic_write(df_map: dict[str, pd.DataFrame], out_xlsx: Path):
-    tmp = NamedTemporaryFile(delete=False, suffix=".xlsx", dir=str(out_xlsx.parent))
-    tmp_path = Path(tmp.name); tmp.close()
+# --- Helpers ---------------------------------------------------------------
+
+def _safe_load(path: Path):
+    if path.exists():
+        return load_workbook(filename=str(path))
+    wb = Workbook()
+    # openpyxl creates a default sheet — remove it so we control all sheets
+    wb.remove(wb.active)
+    return wb
+
+def _ensure_sheet_with_headers(wb, sheet_name: str, headers: List[str]):
+    if sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        # If sheet exists but empty, write headers
+        if ws.max_row == 0 or (ws.max_row == 1 and ws.max_column == 1 and (ws["A1"].value is None)):
+            ws.append(headers)
+        return ws
+    ws = wb.create_sheet(title=sheet_name)
+    ws.append(headers)
+    return ws
+
+def _read_headers_from_master(master_xlsx: Path, desired_sheet: str) -> List[str]:
+    """
+    Read headers (first row) from 'desired_sheet' in the master workbook.
+    If not found, fallback to the first sheet's first row.
+    """
+    m = load_workbook(filename=str(master_xlsx), read_only=True, data_only=True)
     try:
-        with pd.ExcelWriter(tmp_path, mode="w", engine="openpyxl") as xw:
-            for sheet, df in df_map.items():
-                df.to_excel(xw, sheet_name=sheet, index=False)
-        if out_xlsx.exists():
-            os.replace(tmp_path, out_xlsx)
-        else:
-            shutil.move(tmp_path, out_xlsx)
+        ws = m[desired_sheet] if desired_sheet in m.sheetnames else m[m.sheetnames[0]]
+        first_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+        if first_row and any(v is not None for v in first_row):
+            return [str(v) if v is not None else "" for v in first_row]
     finally:
-        try:
-            if tmp_path.exists(): tmp_path.unlink()
-        except Exception:
-            pass
+        m.close()
+    # Last resort: return an empty list (caller must handle)
+    return []
 
-def _retry_write(write_fn):
-    delay = SLEEP_SECONDS
-    for i in range(1, MAX_RETRIES + 1):
-        try:
-            return write_fn()
-        except PermissionError:
-            if i == MAX_RETRIES: raise
-            time.sleep(delay); delay *= 1.5
-
-def append_clean_data_row(src_xlsx: Path, out_xlsx: Path, row: dict):
-    import pandas as pd
-    cols = list(pd.read_excel(src_xlsx, sheet_name="Clean_Data", nrows=0).columns)
-    ordered = {c: ("" if row.get(c) is None else row.get(c)) for c in cols}
-    new_row_df = pd.DataFrame([ordered], columns=cols).astype("object")
-
-    def write():
-        sheets = {}
-        if out_xlsx.exists():
-            try:
-                existing = pd.read_excel(out_xlsx, sheet_name="Clean_Data", dtype="object")
-            except Exception:
-                existing = pd.DataFrame(columns=cols)
-            df = pd.concat([existing, new_row_df], ignore_index=True)
-        else:
-            df = new_row_df
-        sheets["Clean_Data"] = df
-        # keep Diagnostics if present
-        if out_xlsx.exists():
-            try:
-                diag = pd.read_excel(out_xlsx, sheet_name="Diagnostics", dtype="object")
-                sheets["Diagnostics"] = diag
-            except Exception:
-                pass
-        # keep Cookie Field Comparison if present
-        if out_xlsx.exists():
-            try:
-                cmpdf = pd.read_excel(out_xlsx, sheet_name="Cookie Field Comparison", dtype="object")
-                sheets["Cookie Field Comparison"] = cmpdf
-            except Exception:
-                pass
-        _atomic_write(sheets, out_xlsx)
-
-    _retry_write(write)
-
-def append_diagnostics(out_xlsx: Path, rows: list):
-    import pandas as pd
-    df_new = pd.DataFrame(rows)
-    def write():
-        sheets = {}
-        # keep Clean_Data if present
-        if out_xlsx.exists():
-            try:
-                clean = pd.read_excel(out_xlsx, sheet_name="Clean_Data", dtype="object")
-                sheets["Clean_Data"] = clean
-            except Exception:
-                pass
-            try:
-                existing = pd.read_excel(out_xlsx, sheet_name="Diagnostics", dtype="object")
-                df = pd.concat([existing, df_new], ignore_index=True)
-            except Exception:
-                df = df_new
-        else:
-            df = df_new
-        sheets["Diagnostics"] = df
-        # keep Cookie Field Comparison if present
-        if out_xlsx.exists():
-            try:
-                cmpdf = pd.read_excel(out_xlsx, sheet_name="Cookie Field Comparison", dtype="object")
-                sheets["Cookie Field Comparison"] = cmpdf
-            except Exception:
-                pass
-        _atomic_write(sheets, out_xlsx)
-    _retry_write(write)
-
-def append_cookie_comparison(out_xlsx: Path, comparison_row: dict):
+def _append_dict_row(ws, headers: List[str], row_dict: Dict[str, str]):
     """
-    comparison_row must contain keys matching the wide layout. We will
-    append to 'Cookie Field Comparison' sheet (create if absent).
+    Append a row to ws following headers order. Unknown keys are appended as new columns at the end (once).
     """
-    import pandas as pd
-    df_new = pd.DataFrame([comparison_row])
+    # Add any new keys not in headers
+    new_keys = [k for k in row_dict.keys() if k not in headers]
+    if new_keys:
+        headers.extend(new_keys)
+        # grow header row in the sheet
+        if ws.max_row >= 1:
+            for idx, h in enumerate(headers, start=1):
+                ws.cell(row=1, column=idx, value=h)
 
-    def write():
-        sheets = {}
-        # keep Clean_Data if present
-        if out_xlsx.exists():
-            for keep in ("Clean_Data", "Diagnostics"):
-                try:
-                    dfk = pd.read_excel(out_xlsx, sheet_name=keep, dtype="object")
-                    sheets[keep] = dfk
-                except Exception:
-                    pass
-            try:
-                existing = pd.read_excel(out_xlsx, sheet_name="Cookie Field Comparison", dtype="object")
-                # align columns: union, then reindex
-                all_cols = list(dict.fromkeys(list(existing.columns) + list(df_new.columns)))
-                existing = existing.reindex(columns=all_cols)
-                to_add = df_new.reindex(columns=all_cols)
-                df = pd.concat([existing, to_add], ignore_index=True)
-            except Exception:
-                df = df_new
-        else:
-            df = df_new
-        sheets["Cookie Field Comparison"] = df
-        _atomic_write(sheets, out_xlsx)
-    _retry_write(write)
+    # Build row in header order
+    row_vals = [row_dict.get(h, "") for h in headers]
+    ws.append(row_vals)
+
+# --- Public API ------------------------------------------------------------
+
+def append_clean_data_row(master_xlsx: Path, out_xlsx: Path, row: Dict[str, str]):
+    """
+    Appends one row into sheet 'Clean_Data' of out_xlsx, using headers
+    copied from master_xlsx's 'Clean_Data' (first row).
+    """
+    headers = _read_headers_from_master(master_xlsx, "Clean_Data")
+    # If the master is missing headers for Clean_Data, fall back to the keys of row
+    if not headers:
+        headers = list(row.keys())
+
+    wb = _safe_load(out_xlsx)
+    ws = _ensure_sheet_with_headers(wb, "Clean_Data", headers)
+    _append_dict_row(ws, headers, row)
+    wb.save(str(out_xlsx))
+    wb.close()
+
+def append_diagnostics(out_xlsx: Path, rows: List[Dict[str, str]]):
+    """
+    Appends multiple rows into sheet 'Diagnostics'.
+    On first write, headers are taken from the keys of the first row.
+    """
+    if not rows:
+        return
+    headers = list(rows[0].keys())
+    wb = _safe_load(out_xlsx)
+    ws = _ensure_sheet_with_headers(wb, "Diagnostics", headers)
+    for r in rows:
+        _append_dict_row(ws, headers, r)
+    wb.save(str(out_xlsx))
+    wb.close()
+
+def append_cookie_comparison(out_xlsx: Path, wide_row: Dict[str, str]):
+    """
+    Appends one wide row into sheet 'Cookie Field Comparison'.
+    On first write, headers are the keys of wide_row (in current order).
+    """
+    headers = list(wide_row.keys())
+    wb = _safe_load(out_xlsx)
+    ws = _ensure_sheet_with_headers(wb, "Cookie Field Comparison", headers)
+    _append_dict_row(ws, headers, wide_row)
+    wb.save(str(out_xlsx))
+    wb.close()
