@@ -51,7 +51,7 @@ def _get_nav_marker(driver):
         return None
 
 # NEW
-def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))):
+def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
     # If we didn't detect a same-tab redirect, promote first new-tab URL as redirect
     redirect_url_final = redirect_url
     if not redirect_url_final and new_tabs:
@@ -206,7 +206,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             pass
 
         redirect_url, refreshed, new_tabs = _observe_redirect_refresh_and_tabs(
-            driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0
+            driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))
         )
 
         after_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
