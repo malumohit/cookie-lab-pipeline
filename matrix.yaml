@@ -6,100 +6,191 @@ browsers:
   - name: chrome
   - name: edge
   - name: brave
-    binary: "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+    binary: "C:\\Users\\karti\\AppData\\Local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
   - name: opera
-    binary: "C:\\Users\\<YOU>\\AppData\\Local\\Programs\\Opera\\opera.exe"
+    binary: "C:\\Users\\karti\\AppData\\Local\\Programs\\Opera\\opera.exe"
 
 extensions:
   - name: Honey
     version: "12.8.4"
     firefox_path:  "C:\\cookie-lab\\extensions\\firefox\\honey.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\honey_unpacked"   # folder (Load unpacked)
-    #Edit file path below for chromium
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Honey 18.2.1.crx"
   - name: Rakuten
     version: 5.67.3
-    # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\ebates-5.67.3.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\ebates-5.67.3.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Rakuten 5.74.0.crx"
   - name: Avast Safeprice
     version: 23.1.1694
-    # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\avast_safeprice-23.1.1694.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\avast_safeprice-23.1.1694.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Avast SafePrice 24.15.0.766.crx"
   - name: Befrugal
     version: 2025.6.235.0
-    # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\befrugal_automatic_coupons-2025.6.235.0.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\befrugal_automatic_coupons-2025.6.235.0.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\BeFrugal 2025.6.236.0.crx"
   - name: Couponbirds
     version: 4.4.5
-    # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\couponbirds_smartcoupon_finder-4.4.5.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\couponbirds_smartcoupon_finder-4.4.5.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Couponbirds 4.4.8.crx"
   - name: Couponcabin
     version: 3.5.1.0
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\couponcabin-3.5.1.0.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\couponcabin-3.5.1.0.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\CouponCabin Sidekick 3.5.1.0.crx"
+
   - name: Hoopla
     version: 1.0.34
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\hoopla-1.0.34.xpi"
-  - name: Invisiblehand
-    version: 14.22
-    # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\invisiblehand-14.22.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\hoopla-1.0.34.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Hoopla 1.0.35.crx"
+
+
   - name: Joko
     version: 2.1.85
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\joko-2.1.85.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\joko-2.1.85.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Joko 2.1.88.crx"
   - name: Karma Shopping
     version: 10.71.2
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\karma_shopping_assistance-10.71.2.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\karma_shopping_assistance-10.71.2.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Karma 10.79.1.21744.crx"
   - name: Lovedeals
     version: 2.6.5
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\lovedeals_ai-2.6.5.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\lovedeals_ai-2.6.5.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\LoveDeals 2.6.5.crx"
   - name: Mino
     version: 4.30.1
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\mino_automatic_coupons-4.30.1.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\mino_automatic_coupons-4.30.1.xpi"
+    chromium_path: "C:\cookie-lab\extensions\chromium\Mino 4.32.0.crx"
   - name: Moolah
     version: 1.6.6
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\moolah_automatic_coupon-1.6.6.xpi"
-  - name: Perkspot
-    version: 36.4.3
-    # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\perkspot_save_while_you_shop-36.4.3.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\moolah_automatic_coupon-1.6.6.xpi"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Moolah 2.5.1.crx"
   - name: Picodi
     version: 1.0.23
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\picodi_com_cashback-1.0.23.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\picodi_com_cashback-1.0.23.xpi"
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Picodi.com 7.5.12.crx"
   - name: Priceblink
     version: 8.66
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\priceblink_price_comp_coupons-8.66.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\priceblink_price_comp_coupons-8.66.xpi"
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\PriceBlink Coupons 9.9.crx"
   - name: Refermate
     version: 2.0.10
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\refermate_anywhere-2.0.10.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\refermate_anywhere-2.0.10.xpi"
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Refermate 2.0.12.crx"
   - name: Retailmenot
     version: 4.15.0
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\retailmenot-4.15.0.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\retailmenot-4.15.0.xpi"
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\RetailMeNot 4.18.0.crx"
   - name: Simplycodes
     version: 2.5.3
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\simplycodes-2.5.3.xpi"
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\simplycodes-2.5.3.xpi"
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\SimplyCodes 2.5.3.crx"
   - name: Topcashback
     version: 7.0.2.0
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\topcashback_cashback_coupons-7.0.2.0.xpi"
-  - name: Wikibuy
-    version: 0.1.1219
+    firefox_path: "C:\\cookie-lab\\extensions\\firefox\\topcashback_cashback_coupons-7.0.2.0.xpi"
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\TopCashback 7.1.0.0.crx"
+  - #name: Wikibuy
+    #version: 0.1.1219
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\wikibuy_for_firefox-0.1.1219.xpi"
-  - name: Worthepenny
-    version: 2.2.0
+    #path: "C:\\cookie-lab\\extensions\\wikibuy_for_firefox-0.1.1219.xpi"
+  - #name: Worthepenny
+    #version: 2.2.0
     # ABSOLUTE path to the .xpi on your machine
-    path: "C:\\cookie-lab\\extensions\\worthepenny_automatic_coupons-2.2.0.xpi"
+    #path: "C:\\cookie-lab\\extensions\\worthepenny_automatic_coupons-2.2.0.xpi"
+  - name: Coupert
+    version: 6.15.59
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Coupert 6.15.59.crx"
+
+  - name: Cently
+    version: 7.31.0
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Cently by Coupon Follow 7.31.0.crx"
+
+  - name: FatCoupon
+    version: 1.0.25
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\FatCoupon Cashback 1.0.25.crx"
+
+  - name: Norton Coupons
+    version: 7.31.0.766
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\Norton 7.31.0.766.crx"
+
+  - name: CNET Shopping
+    version: 14.22
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\CNET Shopping 14.22.crx"
+
+  - name: Avira Safe Shopping
+    version: 7.31.0.766
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Avira Safe Shopping 7.31.0.766.crx"
+
+  - name: Kindered Shop'n Save
+    version: 7.0.0
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Kindred Shop 'n Save 7.0.0.crx"
+
+  - name: Student Beans
+    version:  3.3.1
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Student Beans 3.3.1.crx"
+
+  - name: Capital One
+    version: 0.1.1318
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Capital One 0.1.1318.crx"
+
+  - name: Dontpayfull
+    version: 2.1.16
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Dontpayfull 2.1.16.crx"
+
+  - name: Newegg Coupon Finder
+    version: 1.0.3
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Newegg Coupon Finder 1.0.3.crx"
+
+  - name: Pie Shopping
+    version: 1.29.1
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Pie Shopping 1.29.1.crx"
+
+  - name: Total Coupon
+    version: 1.29.1
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Pie Shopping 1.29.1.crx"
+
+  - name: Askmeoffer
+    version: 1.1.55
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Askmeoffers 1.1.55.crx"
+
+  - name: Shop Mail
+    version: 1.3.28
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Shopmail 1.3.28.crx"
+
+  - name: Shop TODAY
+    version: 1.4.6
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Shop TODAY Savings 1.4.6.crx"
+
+  - name: Chrome Coupon Finder
+    version: 1.0.0
+    # ABSOLUTE path to the .xpi on your machine
+    chromium_path:"C:\\cookie-lab\\extensions\\chromium\\Chrome Coupon Finder 1.0.0.crx"
 
 links:
   - "https://www.newegg.com/amd-ryzen-7-5700x3d-ryzen-7-5000-series-vermeer-zen-3-socket-am4/p/N82E16819113812?srsltid=AfmBOopcTB8eTCCNaNUO-eKMt3dKeIBmk0dwsszH-Ec1CUxXlQcHhB31&utm_medium=affiliate&utm_campaign=afc-ran-com-_-Linus+Tech+Tips&utm_source=afc-Linus+Tech+Tips&AFFID=3641906&AFFNAME=Linus+Tech+Tips&ACRID=1&ASUBID=geniuslink&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3641906&ranSiteID=odkoVVpgbeM-5Xogvs7apNxqa7vDXX.9YQ" 
@@ -107,6 +198,14 @@ links:
   - "https://www.newegg.com/zotac-gaming-zt-d40600h-10m-geforce-rtx-4060-8gb-graphics-card-double-fans/p/N82E16814500565?utm_medium=affiliate&AFFNAME=Linus%20Tech%20Tips&utm_campaign=afc-ran-com-_-Linus%20Tech%20Tips&ACRID=1&ASUBID=geniuslink&srsltid=AfmBOor60ydTnIZKeq8cD_iQtUEGN7k9r6MV_dkteJmu8DPiDDFVXNW-&ASID=https%3A%2F%2Fwww.youtube.com%2F&utm_source=afc-Linus%20Tech%20Tips&ranSiteID=odkoVVpgbeM-ALyXSSLTHhQLIvx4HBBuIA&ranEAID=3641906&ranMID=44583&AFFID=3641906"
   - "https://www.newegg.com/gigabyte-atx-motherboards-amd-x870-am5/p/N82E16813145522?utm_medium=affiliate&AFFNAME=Linus%20Tech%20Tips&utm_campaign=afc-ran-com-_-Linus%20Tech%20Tips&ACRID=1&ASUBID=geniuslink&srsltid=AfmBOoqVbzWWJ2uuwAIufrm0jPvNmyc2sYAtY3HPr1aNXtLJpFgO3huX&ASID=https%3A%2F%2Fwww.youtube.com%2F&utm_source=afc-Linus%20Tech%20Tips&ranSiteID=odkoVVpgbeM-7XsqpDnsorsNvB2W_Nhs7w&ranEAID=3641906&ranMID=44583&AFFID=3641906"
   - "https://www.newegg.com/kingston-500gb-nv2-nvme/p/N82E16820242729?srsltid=AfmBOopc7CUc1bacHzZo4KCwpiLzQ_RrHtl9fR9uMBnHOHCO-SnmNyOS&utm_medium=affiliate&utm_campaign=afc-ran-com-_-Linus+Tech+Tips&utm_source=afc-Linus+Tech+Tips&AFFID=3641906&AFFNAME=Linus+Tech+Tips&ACRID=1&ASUBID=geniuslink&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3641906&ranSiteID=odkoVVpgbeM-7_kCfBOuWKX5svlDRPSmJQ"
-  - "https://www.newegg.com/g-skill-ripjaws-v-series-16gb-ddr4-3600-cas-latency-cl18-desktop-memory-black/p/N82E16820232882?utm_source=afc-Linus%20Tech%20Tips&ranMID=44583&utm_medium=affiliate&utm_campaign=afc-ran-com-_-Linus%20Tech%20Tips&srsltid=AfmBOoqnOpJtE5DpVgLnWQwtQ4QvleAHcJzdSLrXWHKArci_eCSkjYkO&AFFID=3641906&ranSiteID=odkoVVpgbeM-FSNvSYU_lybbjlNGyELW6w&AFFNAME=Linus%20Tech%20Tips&ranEAID=3641906&ASUBID=geniuslink&ACRID=1&ASID=https%3A%2F%2Fwww.youtube.com%2F"
-  - "https://www.newegg.com/deepcool-micro-atx-tower-abs-spcc-tempered-glass-computer-case-black-matrexx-40-3fs/p/N82E16811853101?nrtv_cid=mazrxo8ze6kwp&utm_campaign=afc-howl-LMG%20-%20ShortCircuit-mazrxo8ze6kwp&utm_medium=affiliate&utm_source=howl-LMG%20-%20ShortCircuit"
+  - "https://www.newegg.com/g-skill-flare-x5-32gb-ddr5-6000-cas-latency-cl36-desktop-memory-black/p/N82E16820374419?utm_medium=affiliate&utm_campaign=afc-ran-com-_-Robeytech&utm_source=afc-Robeytech&AFFID=3643405&AFFNAME=Robeytech&ACRID=1&ASUBID=&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3643405&ranSiteID=sgz9NKC24Ms-IkoB0QRWD9M8SfsLaFGuwg
+"
+  - "https://www.newegg.com/fractal-design-liquid-cooling-system-lumen/p/N82E16835352105?utm_medium=affiliate&utm_campaign=afc-ran-com-_-Robeytech&utm_source=afc-Robeytech&AFFID=3643405&AFFNAME=Robeytech&ACRID=1&ASUBID=&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3643405&ranSiteID=sgz9NKC24Ms-fUdXbWctsN5f.I7WyZGldg"
+
+  - "https://www.newegg.com/kingston-2tb-snv3s/p/N82E16820242903?utm_medium=affiliate&utm_campaign=afc-ran-com-_-Robeytech&utm_source=afc-Robeytech&AFFID=3643405&AFFNAME=Robeytech&ACRID=1&ASUBID=&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3643405&ranSiteID=sgz9NKC24Ms-romW_BCWlXBcJbnL4aFZhA"
+
+  - "https://www.newegg.com/fractal-design-atx-mid-tower-meshify-3-ambience-pro-rgb-steel-pc-case-black-fd-c-mes3a-03/p/N82E16811352226?utm_medium=affiliate&utm_campaign=afc-ran-com-_-Robeytech&utm_source=afc-Robeytech&AFFID=3643405&AFFNAME=Robeytech&ACRID=1&ASUBID=&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3643405&ranSiteID=sgz9NKC24Ms-rmowE3nYdKbuS2RKnTeCXg"
+
+  - "https://www.newegg.com/corsair-rmx-series-atx-3-1-compatible-750-w-cybenetics-gold-power-supply-black-rm750e/p/N82E16817139339?utm_medium=affiliate&utm_campaign=afc-ran-com-_-Robeytech&utm_source=afc-Robeytech&AFFID=3643405&AFFNAME=Robeytech&ACRID=1&ASUBID=&ASID=https%3A%2F%2Fwww.youtube.com%2F&ranMID=44583&ranEAID=3643405&ranSiteID=sgz9NKC24Ms-LIM56hoDQJiQX0GyS5werg"
+
   # add more links here...
