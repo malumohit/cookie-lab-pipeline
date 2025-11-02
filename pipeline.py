@@ -50,7 +50,7 @@ def parse_args():
         default=None,
         help='If set, only run this extension (e.g., "Perkspot") and then stop',
     )
-        p.add_argument(
+    p.add_argument(
         "--redirect-window",
         type=float,
         default=6.0,
