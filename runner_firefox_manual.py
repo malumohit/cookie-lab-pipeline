@@ -56,7 +56,12 @@ def _get_nav_marker(driver):
         return None
 
 # NEW: observe redirect/refresh + tabs for a short window right after pressing the extension button
-def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0)):
+def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))):
+    # If we didn't detect a same-tab redirect, promote first new-tab URL as redirect
+    redirect_url_final = redirect_url
+    if not redirect_url_final and new_tabs:
+        first = new_tabs[0]
+        redirect_url_final = first.get("url", "")
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs = []
@@ -225,7 +230,10 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
                               driver, browser_ver, domain,
                               before_cookies, after_cookies,
                               new_tabs, prefix,
-                              redirect_url, refreshed):
+                              redirect_url_final, refreshed):
+    # Build semicolon-joined lists of any new tabs
+    new_tab_urls = "; ".join([t.get("url","") for t in new_tabs if t.get("url")])
+    new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
     # Build wide comparison row for TARGETS (raw values) + dynamic for all changed cookies
     before_targets = _snapshot_targets(before_cookies)
     after_targets  = _snapshot_targets(after_cookies)
@@ -298,8 +306,10 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Cookies Added (count)": str(len(added)),
         "Cookies Changed (count)": str(len(changed)),
         # NEW: redirect/refresh capture
-        "Redirect URL": redirect_url,
+        "Redirect URL": redirect_url_final,
         "Refreshed?": "Yes" if refreshed else "No",
+        "New Tab URLs": new_tab_urls,         # <- NEW
+        "New Tab Titles": new_tab_titles,     # <- NEW
         "HAR Path": "",
         "Screenshots": "",
         "Status": "SUCCESS",
