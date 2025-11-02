@@ -1,4 +1,6 @@
-# runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera) with redirect+refresh & dynamic cookie diffs
+# runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
+# with redirect+refresh & dynamic cookie diffs
+
 import time, hashlib, tempfile, shutil
 from urllib.parse import urlparse
 from pathlib import Path
@@ -19,8 +21,10 @@ TARGET_ORDER = [
 ]
 TARGET_SET = set(TARGET_ORDER)
 
+
 def _h(v: str) -> str:
     return hashlib.sha256((v or "").encode("utf-8")).hexdigest()[:16]
+
 
 def _cookie_frame_full(c: dict) -> dict:
     return {
@@ -35,6 +39,7 @@ def _cookie_frame_full(c: dict) -> dict:
         "sameSite": c.get("sameSite"),
     }
 
+
 def _snapshot_targets(cookies):
     out = {}
     for c in cookies:
@@ -43,20 +48,19 @@ def _snapshot_targets(cookies):
             out[n] = {"value": c["value"], "hash": c["value_hash"]}
     return out
 
-# NEW
+
+# Simple marker to detect refresh/redirect on same tab
 def _get_nav_marker(driver):
     try:
-        return driver.execute_script("return (performance.timeOrigin||performance.timing.navigationStart)||Date.now();")
+        return driver.execute_script(
+            "return (performance.timeOrigin||performance.timing.navigationStart)||Date.now();"
+        )
     except Exception:
         return None
 
-# NEW
+
+# Observe redirect/refresh + new tabs for a short window right after pressing the extension button
 def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
-    # If we didn't detect a same-tab redirect, promote first new-tab URL as redirect
-    redirect_url_final = redirect_url
-    if not redirect_url_final and new_tabs:
-        first = new_tabs[0]
-        redirect_url_final = first.get("url", "")
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs = []
@@ -64,6 +68,7 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
     refreshed = False
 
     while (time.time() - t0) < window_sec:
+        # detect new tabs
         try:
             handles = set(driver.window_handles)
         except Exception:
@@ -77,8 +82,9 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
             finally:
                 seen_handles.add(h)
 
+        # detect redirect/refresh on current tab
         try:
-            driver.switch_to.window(list(seen_handles)[0])
+            driver.switch_to.window(list(pre_handles)[0])  # back to original if possible
         except Exception:
             pass
 
@@ -89,15 +95,18 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
 
         nav_ts = _get_nav_marker(driver)
 
+        # same-tab redirect
         if curr_url and pre_url and curr_url != pre_url and not redirect_url:
             redirect_url = curr_url
 
+        # same URL but a navigation occurred -> refresh
         if nav_ts is not None and pre_nav_ts is not None and nav_ts != pre_nav_ts:
             if (not redirect_url) and (curr_url == pre_url):
                 refreshed = True
 
         time.sleep(0.2)
 
+    # try to return focus to original handle if we still have it
     try:
         orig = list(pre_handles)[0]
         driver.switch_to.window(orig)
@@ -106,27 +115,37 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
 
     return redirect_url, refreshed, new_tabs
 
+
 def _make_driver(browser_binary: str | None, ext_path: str | None, profile_dir: Path):
     opts = ChromeOptions()
     if browser_binary:
         opts.binary_location = browser_binary
+
+    # isolate state per run
     opts.add_argument(f"--user-data-dir={str(profile_dir)}")
+    # keep things stable/quiet
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
-    # Extension (CRX) or unpacked dir
+
+    # Load extension: allow CRX path or unpacked dir
     if ext_path:
-        if Path(ext_path).is_dir():
-            opts.add_argument(f"--load-extension={ext_path}")
+        p = Path(ext_path)
+        if p.is_dir():
+            # unpacked directory
+            opts.add_argument(f"--load-extension={p}")
         else:
-            opts.add_argument(f"--load-extension={Path(ext_path).parent}")
-            opts.add_argument(f"--disable-extensions-except={ext_path}")
-            opts.add_argument(f"--load-extension={ext_path}")
+            # CRX file — enable only this extension
+            opts.add_argument(f"--disable-extensions-except={p}")
+            opts.add_argument(f"--load-extension={p}")
+
     return webdriver.Chrome(options=opts)
+
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     ext_ordinal = job.get("extension_ordinal", 0)
     prefix = f"{ext_ordinal}." if ext_ordinal else ""
 
+    # Fresh temporary profile (isolated cookies/cache)
     profile_dir = Path(tempfile.mkdtemp(prefix=f"{job.get('browser','chromium')}_profile_"))
     driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), profile_dir)
     try:
@@ -138,8 +157,10 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 break
             except NoSuchWindowException:
                 if attempt == 1:
-                    try: driver.quit()
-                    except Exception: pass
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
                     driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), profile_dir)
                     continue
                 else:
@@ -179,12 +200,12 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 print("Skipping coupon step for this run as requested.")
                 after_coupon_cookies = before_coupon_cookies
                 new_tabs = []
-                redirect_url = ""
+                redirect_url_final = ""
                 refreshed = False
                 goto_comparison_and_write(
                     job, src_workbook, out_workbook, driver, browser_ver, domain,
                     before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
-                    redirect_url, refreshed
+                    redirect_url_final, refreshed
                 )
                 return
 
@@ -200,21 +221,36 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         pre_url = driver.current_url or ""
         pre_nav_ts = _get_nav_marker(driver)
 
+        # safe defaults so we never reference unassigned locals
+        redirect_url_final = ""
+        refreshed = False
+        new_tabs = []
+
         try:
             input()
         except Exception:
             pass
 
-        redirect_url, refreshed, new_tabs = _observe_redirect_refresh_and_tabs(
-            driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))
-        )
+        # Observe redirects/refresh/new tabs for a short window (fast-closing tabs/refreshes captured)
+        try:
+            redirect_url, refreshed, new_tabs = _observe_redirect_refresh_and_tabs(
+                driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))
+            )
+            # Promote first new-tab URL if no same-tab redirect was detected
+            redirect_url_final = redirect_url
+            if not redirect_url_final and new_tabs:
+                first = new_tabs[0]
+                redirect_url_final = first.get("url", "")
+        except Exception as e:
+            print(f"Note: redirect observation failed ({e}); continuing with defaults.")
 
+        # AFTER snapshot
         after_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
 
         goto_comparison_and_write(
             job, src_workbook, out_workbook, driver, browser_ver, domain,
             before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
-            redirect_url, refreshed
+            redirect_url_final, refreshed
         )
 
     finally:
@@ -226,6 +262,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             shutil.rmtree(profile_dir, ignore_errors=True)
         except Exception:
             pass
+
 
 def goto_comparison_and_write(job, src_workbook, out_workbook,
                               driver, browser_ver, domain,
@@ -239,8 +276,11 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
     before_targets = _snapshot_targets(before_cookies)
     after_targets  = _snapshot_targets(after_cookies)
 
-    def val_before(name): return (prefix + (before_targets.get(name, {}).get("value", "") or "")) if before_targets.get(name) else ""
-    def val_after(name):  return (prefix + (after_targets.get(name, {}).get("value", "") or "")) if after_targets.get(name) else ""
+    def val_before(name):
+        return (prefix + (before_targets.get(name, {}).get("value", "") or "")) if before_targets.get(name) else ""
+
+    def val_after(name):
+        return (prefix + (after_targets.get(name, {}).get("value", "") or "")) if after_targets.get(name) else ""
 
     wide = {
         "Plugin": job.get("extension_name", ""),
@@ -253,15 +293,16 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         wide[f"{ck} (Before)"] = val_before(ck)
         wide[f"{ck} (After)"]  = val_after(ck)
 
+    # Dynamic columns for any *other* cookie names that changed
     def key(c): return (c["name"], c["domain"], c["path"])
     bmap = {key(c): c for c in before_cookies}
     amap = {key(c): c for c in after_cookies}
 
     changed_names = set()
     for k in amap.keys() - bmap.keys():
-        changed_names.add(amap[k]["name"])
+        changed_names.add(amap[k]["name"])  # added
     for k in bmap.keys() - amap.keys():
-        changed_names.add(bmap[k]["name"])
+        changed_names.add(bmap[k]["name"])  # removed
     for k in amap.keys() & bmap.keys():
         if amap[k]["value_hash"] != bmap[k]["value_hash"]:
             changed_names.add(amap[k]["name"])
@@ -274,6 +315,7 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         wide[f"{name} (Before)"] = (prefix + bvals[0]) if bvals else ""
         wide[f"{name} (After)"]  = (prefix + avals[0]) if avals else ""
 
+    # Diagnostics summary counts
     added = [amap[k] for k in amap.keys() - bmap.keys()]
     changed = []
     for k in amap.keys() & bmap.keys():
@@ -294,21 +336,23 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "New Pages Opened": str(len(new_tabs)),
         "Cookies Added (count)": str(len(added)),
         "Cookies Changed (count)": str(len(changed)),
-        "Redirect URL": redirect_url_final,           # NEW
-        "Refreshed?": "Yes" if refreshed else "No", 
-        "New Tab URLs": new_tab_urls,         # <- NEW
-        "New Tab Titles": new_tab_titles, # NEW
+        # redirect/refresh capture
+        "Redirect URL": redirect_url_final,
+        "Refreshed?": "Yes" if refreshed else "No",
+        "New Tab URLs": new_tab_urls,
+        "New Tab Titles": new_tab_titles,
         "HAR Path": "",
         "Screenshots": "",
         "Status": "SUCCESS",
         "Failure Reason": "",
         "Notes": f"CookieComparisonRow=1; Tabs={len(new_tabs)}",
-        "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),  # <-- NEW (optional)
+        "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),
     }
 
     append_cookie_comparison(out_workbook, wide)
     append_clean_data_row(src_workbook, out_workbook, clean_row)
 
+    # Per-cookie diagnostics for targets + each new tab as a row
     diag_rows = []
     for ck in TARGET_ORDER:
         b = next((c for c in before_cookies if c["name"] == ck), None)
@@ -316,9 +360,12 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         b_hash = b and b.get("value_hash")
         a_hash = a and a.get("value_hash")
         change = "UNCHANGED"
-        if b and not a: change = "REMOVED"
-        elif a and not b: change = "ADDED"
-        elif b and a and b_hash != a_hash: change = "CHANGED"
+        if b and not a:
+            change = "REMOVED"
+        elif a and not b:
+            change = "ADDED"
+        elif b and a and b_hash != a_hash:
+            change = "CHANGED"
         if change != "UNCHANGED":
             diag_rows.append({
                 "Test ID": clean_row["Test ID"],
