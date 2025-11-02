@@ -60,7 +60,13 @@ def parse_args():
 
 
 def load_matrix(path: str) -> dict:
-    cfg = yaml.safe_load(Path(path).read_text())
+    try:
+        cfg = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SystemExit(f"matrix.yaml not found at: {path}")
+    except Exception as e:
+        raise SystemExit(f"Failed to read matrix.yaml: {e}")
+
     # normalize names/versions to strings
     for e in cfg.get("extensions", []):
         if "name" in e and e["name"] is not None:
@@ -90,6 +96,7 @@ def run_pipeline(
     start_ext: str | None = None,
     start_link_idx: int = 1,
     only_extension: str | None = None,
+    redirect_window: float = 6.0,
 ):
     master = Path(cfg["master_workbook"])
     output = Path(cfg["output_workbook"])
@@ -154,7 +161,6 @@ def run_pipeline(
             ext_path = resolve_extension_path(ext, bname)
             if not ext_path:
                 print(f"(skip) {bname}: '{ext_name}' has no compatible package (firefox_path/chromium_path missing).")
-                # if only_extension was requested and it's missing for this browser, continue to next browser
                 continue
 
             # links iteration
@@ -177,7 +183,7 @@ def run_pipeline(
                     "affiliate_link": link,
                     "merchant": "",
                     "extension_ordinal": ext_global_ordinal,
-                    "redirect_window_sec": float(args.redirect_window), 
+                    "redirect_window_sec": float(redirect_window),
                 }
 
                 print(f"\n=== RUN {job_id} ===")
@@ -207,4 +213,5 @@ if __name__ == "__main__":
         start_ext=args.start_extension,
         start_link_idx=args.start_link,
         only_extension=args.only_extension,
+        redirect_window=args.redirect_window,
     )
