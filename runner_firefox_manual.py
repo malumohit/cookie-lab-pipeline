@@ -1,11 +1,12 @@
-# runner_firefox_manual.py — manual-browse runner
-import time, hashlib
+# runner_firefox_manual.py — manual-browse runner (temp profile + hardened)
+import time, hashlib, tempfile, shutil
 from urllib.parse import urlparse, unquote
 from pathlib import Path
 from datetime import datetime
 
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
+from selenium.common.exceptions import NoSuchWindowException
 
 from excel_writer import (
     append_clean_data_row,
@@ -50,6 +51,42 @@ def _snapshot_targets(cookies):
     return out
 
 
+def _ensure_window_open(driver):
+    """Guarantee at least one open window for nav/cookie ops."""
+    try:
+        handles = driver.window_handles
+        if not handles:
+            driver.switch_to.new_window("window")
+            return
+        driver.switch_to.window(handles[0])
+    except Exception:
+        try:
+            driver.switch_to.new_window("window")
+        except Exception:
+            pass
+
+
+def _launch_firefox_with_profile(ext_path: str, ff_profile_dir: Path) -> webdriver.Firefox:
+    """Create a Firefox driver bound to a specific profile folder and install extension."""
+    opts = Options()
+    # opts.add_argument("-headless")  # keep visible for manual flow
+    # Use a clean temp profile directory
+    opts.add_argument("-profile")
+    opts.add_argument(str(ff_profile_dir))
+    # Reduce session-restore prompts / crash dialogs
+    opts.set_preference("browser.sessionstore.resume_from_crash", False)
+    opts.set_preference("browser.shell.checkDefaultBrowser", False)
+
+    drv = webdriver.Firefox(options=opts)
+    try:
+        if ext_path:
+            drv.install_addon(ext_path, temporary=True)
+    except Exception:
+        # Non-fatal: continue even if extension install hiccups
+        pass
+    return drv
+
+
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     """
     Manual flow:
@@ -61,15 +98,28 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     ext_ordinal = job.get("extension_ordinal", 0)
     prefix = f"{ext_ordinal}." if ext_ordinal else ""
 
-    opts = Options()
-    # opts.add_argument("-headless")  # usually keep visible
-    driver = webdriver.Firefox(options=opts)
-    try:
-        # Install extension temporarily
-        driver.install_addon(job["extension_path"], temporary=True)
+    # Fresh temporary Firefox profile (isolated cookies/cache)
+    ff_profile_dir = Path(tempfile.mkdtemp(prefix="firefox_profile_"))
 
-        # Open the link; YOU take it from here to checkout
-        driver.get(job["affiliate_link"])
+    driver = _launch_firefox_with_profile(job.get("extension_path", ""), ff_profile_dir)
+    try:
+        # Open the link; YOU take it from here to checkout (retry once if the window vanished)
+        url = job["affiliate_link"]
+        for attempt in (1, 2):
+            try:
+                _ensure_window_open(driver)
+                driver.get(url)
+                break
+            except NoSuchWindowException:
+                if attempt == 1:
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                    driver = _launch_firefox_with_profile(job.get("extension_path", ""), ff_profile_dir)
+                    continue
+                else:
+                    raise
 
         # Prompt loop: confirm when you're at checkout
         print("\n=== MANUAL NAVIGATION ===")
@@ -78,7 +128,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         print("Or type 's' + Enter to skip the coupon step for this run.")
 
         before_coupon_cookies = None
-        browser_ver = driver.capabilities.get("browserVersion", "")
+        browser_ver = driver.capabilities.get("browserVersion", "") or driver.capabilities.get("version", "")
         domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
 
         while True:
@@ -88,6 +138,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 ans = ""
 
             if ans in ("y", "yes"):
+                _ensure_window_open(driver)
                 # Take the baseline just before you apply coupons
                 before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
@@ -95,14 +146,8 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
 
             elif ans in ("s", "skip"):
                 try:
-                    # only collect cookies if a window is still open
-                    handles = driver.window_handles
-                    if handles:
-                        driver.switch_to.window(handles[0])
-                        before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
-                    else:
-                        print("No browser window open; proceeding with empty cookie snapshot.")
-                        before_coupon_cookies = []
+                    _ensure_window_open(driver)
+                    before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 except Exception as e:
                     print(f"Warning: could not read cookies before skip ({e}). Proceeding empty.")
                     before_coupon_cookies = []
@@ -157,6 +202,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             pass
 
         # AFTER snapshot
+        _ensure_window_open(driver)
         after_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
 
         goto_comparison_and_write(
@@ -169,6 +215,11 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     finally:
         try:
             driver.quit()
+        except Exception:
+            pass
+        # remove the temp profile directory
+        try:
+            shutil.rmtree(ff_profile_dir, ignore_errors=True)
         except Exception:
             pass
 
@@ -283,4 +334,4 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         })
 
     append_diagnostics(out_workbook, diag_rows)
-    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (manual mode).")
+    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (manual mode, Firefox clean profile).")
