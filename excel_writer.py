@@ -1,66 +1,120 @@
-# excel_writer.py
+# excel_writer.py  — openpyxl-only, dynamic headers, no pandas
 from pathlib import Path
-import pandas as pd
+from typing import List, Dict, Any
+from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
 def _ensure_parent(p: Path):
     p.parent.mkdir(parents=True, exist_ok=True)
 
-def _read_sheet(path: Path, sheet: str) -> pd.DataFrame:
+def _load_or_create_book(path: Path):
     if path.exists():
         try:
-            return pd.read_excel(path, sheet_name=sheet, engine="openpyxl")
+            return load_workbook(path)
         except Exception:
-            return pd.DataFrame()
-    return pd.DataFrame()
-
-def _write_sheet(path: Path, sheet: str, df: pd.DataFrame):
-    mode = "a" if path.exists() else "w"
-    with pd.ExcelWriter(path, mode=mode, engine="openpyxl") as xw:
-        df.to_excel(xw, index=False, sheet_name=sheet)
-
-def _append_row_dynamic(out_xlsx: Path, sheet_name: str, row: dict):
-    _ensure_parent(out_xlsx)
-    existing = _read_sheet(out_xlsx, sheet_name)
-    existing_cols = list(existing.columns) if not existing.empty else []
-    new_cols = [c for c in row.keys() if c not in existing_cols]
-    cols = existing_cols + new_cols
-
-    new_df = pd.DataFrame([{c: row.get(c, "") for c in cols}], columns=cols)
-    if existing.empty:
-        out = new_df
+            # corrupted or unreadable → start fresh
+            wb = Workbook()
+            # remove default sheet to avoid surprises; we'll add as needed
+            if "Sheet" in wb.sheetnames:
+                ws = wb["Sheet"]
+                wb.remove(ws)
+            return wb
     else:
-        out = pd.concat([existing.reindex(columns=cols, fill_value=""), new_df], ignore_index=True)
-    _write_sheet(out_xlsx, sheet_name, out)
+        wb = Workbook()
+        if "Sheet" in wb.sheetnames:
+            ws = wb["Sheet"]
+            wb.remove(ws)
+        return wb
 
-def _append_rows_dynamic(out_xlsx: Path, sheet_name: str, rows: list[dict]):
-    if not rows:
-        return
-    _ensure_parent(out_xlsx)
-    existing = _read_sheet(out_xlsx, sheet_name)
-    existing_cols = list(existing.columns) if not existing.empty else []
+def _get_or_create_sheet(wb, name: str) -> Worksheet:
+    if name in wb.sheetnames:
+        return wb[name]
+    ws = wb.create_sheet(title=name)
+    # initialize empty header row
+    ws.append([])  # row 1 reserved for headers
+    return ws
 
-    all_new_cols = []
-    seen = set(existing_cols)
+def _read_header(ws: Worksheet) -> List[str]:
+    if ws.max_row >= 1:
+        return [(c.value if c.value is not None else "") for c in ws[1]]
+    return []
+
+def _write_header(ws: Worksheet, headers: List[str]):
+    # rewrite entire header row (row 1)
+    if ws.max_row < 1:
+        ws.append([])
+    # clear existing header row cells (optional)
+    for i in range(1, len(headers) + 1):
+        ws.cell(row=1, column=i, value=headers[i-1])
+
+def _ensure_headers(ws: Worksheet, keys: List[str]) -> List[str]:
+    """Merge existing headers with new keys (append-only). Return final header list."""
+    header = _read_header(ws)
+    existing = set(h for h in header if h)
+    # initialize header if none
+    if not header:
+        header = []
+
+    added = []
+    for k in keys:
+        if k not in existing:
+            header.append(k)
+            existing.add(k)
+            added.append(k)
+
+    if added:
+        _write_header(ws, header)
+
+    return header
+
+def _append_row(ws: Worksheet, header: List[str], row: Dict[str, Any]):
+    # build list in header order
+    values = [row.get(h, "") for h in header]
+    ws.append(values)
+
+def _append_rows(ws: Worksheet, header: List[str], rows: List[Dict[str, Any]]):
+    for r in rows:
+        values = [r.get(h, "") for h in header]
+        ws.append(values)
+
+def _collect_all_keys(rows: List[Dict[str, Any]]) -> List[str]:
+    out: List[str] = []
+    seen = set()
     for r in rows:
         for k in r.keys():
             if k not in seen:
-                seen.add(k); all_new_cols.append(k)
-    cols = existing_cols + all_new_cols
+                seen.add(k)
+                out.append(k)
+    return out
 
-    norm = [{c: r.get(c, "") for c in cols} for r in rows]
-    new_df = pd.DataFrame(norm, columns=cols)
-    if existing.empty:
-        out = new_df
-    else:
-        out = pd.concat([existing.reindex(columns=cols, fill_value=""), new_df], ignore_index=True)
-    _write_sheet(out_xlsx, sheet_name, out)
+# Public functions used by the runners
 
-# Public API used by runners
-def append_cookie_comparison(out_workbook: Path, row: dict):
-    _append_row_dynamic(out_workbook, "Cookie Field Comparison", row)
+def append_cookie_comparison(out_workbook: Path, row: Dict[str, Any]):
+    """Append one row to 'Cookie Field Comparison', expanding headers as needed."""
+    _ensure_parent(out_workbook)
+    wb = _load_or_create_book(out_workbook)
+    ws = _get_or_create_sheet(wb, "Cookie Field Comparison")
+    header = _ensure_headers(ws, list(row.keys()))
+    _append_row(ws, header, row)
+    wb.save(out_workbook)
 
-def append_clean_data_row(src_workbook: Path, out_workbook: Path, row: dict):
-    _append_row_dynamic(out_workbook, "Clean_Data", row)
+def append_clean_data_row(src_workbook: Path, out_workbook: Path, row: Dict[str, Any]):
+    """Append one row to 'Clean_Data', expanding headers as needed."""
+    _ensure_parent(out_workbook)
+    wb = _load_or_create_book(out_workbook)
+    ws = _get_or_create_sheet(wb, "Clean_Data")
+    header = _ensure_headers(ws, list(row.keys()))
+    _append_row(ws, header, row)
+    wb.save(out_workbook)
 
-def append_diagnostics(out_workbook: Path, rows: list[dict]):
-    _append_rows_dynamic(out_workbook, "Diagnostics", rows)
+def append_diagnostics(out_workbook: Path, rows: List[Dict[str, Any]]):
+    """Append multiple rows to 'Diagnostics', expanding headers as needed."""
+    if not rows:
+        return
+    _ensure_parent(out_workbook)
+    wb = _load_or_create_book(out_workbook)
+    ws = _get_or_create_sheet(wb, "Diagnostics")
+    keys_union = _collect_all_keys(rows)
+    header = _ensure_headers(ws, keys_union)
+    _append_rows(ws, header, rows)
+    wb.save(out_workbook)
