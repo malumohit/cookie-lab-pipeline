@@ -25,6 +25,11 @@ def parse_args():
     p.add_argument("--start-link", type=int, default=1)
     p.add_argument("--only-extension", default=None)
     p.add_argument("--redirect-window", type=float, default=6.0)
+    # NEW: choose a privacy level defined in matrix.yaml -> privacy_levels
+    p.add_argument(
+        "--privacy",
+        default=None,
+        help="Privacy profile name to use (must match matrix.yaml privacy_levels for the browser family)",
     return p.parse_args()
 
 def load_matrix(path: str) -> dict:
@@ -55,7 +60,7 @@ def _privacy_iter(cfg: dict, bname: str):
     return pl.get(bname.lower(), pl.get("chromium", [{"name": "default"}]))
 
 def run_pipeline(cfg: dict, start_browser=None, start_ext=None, start_link_idx=1,
-                 only_extension=None, redirect_window=6.0):
+                 only_extension=None, redirect_window=6.0, privacy_name: str | None = None):
     master = Path(cfg["master_workbook"])
     output = Path(cfg["output_workbook"])
     browsers = cfg.get("browsers", [])
@@ -156,4 +161,5 @@ if __name__ == "__main__":
         start_link_idx=args.start_link,
         only_extension=args.only_extension,
         redirect_window=args.redirect_window,
+        privacy_name=args.privacy,
     )
