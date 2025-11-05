@@ -41,7 +41,7 @@ extensions:
   - name: Rakuten
     version: "5.67.3"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\ebates-5.67.3.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Rakuten 5.74.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Rakuten 5.74.0"
 
   - name: Avast Safeprice
     version: "23.1.1694"
