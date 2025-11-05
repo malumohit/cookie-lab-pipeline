@@ -1,11 +1,7 @@
 # runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
-# FIX: bypass Selenium Manager using webdriver-manager (no more hang / "Chrome instance exited").
-# - Picks correct driver for the installed browser version.
-# - Auto-detects browser binary if not provided in matrix.yaml.
-# - Loads unpacked extension reliably.
-# - Skips incognito/private flags so extension UI can show.
-# - Keeps: redirect/refresh watch, dynamic cookie diffs, sanitized headers,
-#          "Extension Popup Seen?", Browser Privacy Level in Clean_Data.
+# FIX: remove webdriver-manager `path=` arg (works with older versions).
+# Still: pins driver via webdriver-manager, loads unpacked extension, avoids Selenium Manager hang,
+# tracks privacy level, redirect/refresh, dynamic cookie diffs, and "Extension Popup Seen?".
 
 import os
 import json
@@ -29,7 +25,7 @@ except Exception:
     EdgeOptions = None
     EdgeService = None
 
-# NEW: webdriver-manager to pin exact driver version and avoid Selenium Manager
+# webdriver-manager (no `path=` usage to support older versions)
 try:
     from webdriver_manager.chrome import ChromeDriverManager
     from webdriver_manager.microsoft import EdgeChromiumDriverManager
@@ -39,7 +35,7 @@ except Exception:
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
 
-# ===== TARGET COOKIES (case-insensitive; '*' acts as prefix wildcard for GA-style cookies) =====
+# ===== TARGET COOKIES =========================================================
 TARGET_ORDER = [
     "NV_MC_LC","NV_MC_FC","NV_ECM_TK_LC",
     "__attentive_utm_param_campaign","__attentive_utm_param_source","__attentive_utm_param_medium",
@@ -117,7 +113,6 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
     seen = set(pre_handles)
     new_tabs, redirect_url, refreshed = [], "", False
     while (time.time()-t0) < window_sec:
-        # new tabs
         try: handles = set(driver.window_handles)
         except Exception: handles = set()
         for h in list(handles - seen):
@@ -128,7 +123,6 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
                 new_tabs.append({"title": "", "url": ""})
             finally:
                 seen.add(h)
-        # original
         try: driver.switch_to.window(list(pre_handles)[0])
         except Exception: pass
 
@@ -178,7 +172,7 @@ def _auto_find_browser_binary(browser: str) -> str | None:
             pass
     return None
 
-# ===== options and services =====
+# ===== options/services =====
 def _apply_common_args(opts, profile_dir: Path|None, privacy_flags, privacy_prefs):
     if profile_dir:
         opts.add_argument(f"--user-data-dir={str(profile_dir)}")
@@ -186,20 +180,16 @@ def _apply_common_args(opts, profile_dir: Path|None, privacy_flags, privacy_pref
     opts.add_argument("--no-default-browser-check")
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
-    opts.add_argument("--remote-allow-origins=*")  # common fix
-
-    # Flags (skip private modes so the extension UI can appear)
+    opts.add_argument("--remote-allow-origins=*")
     for f in (privacy_flags or []):
         fl = str(f).strip().lower()
         if fl in ("--incognito","--inprivate"):
             print("[warn] skipping incognito/private flag so extension UI can show")
             continue
         opts.add_argument(f)
-
     if privacy_prefs:
         try: opts.add_experimental_option("prefs", privacy_prefs)
         except Exception: pass
-
     try:
         opts.add_experimental_option("excludeSwitches", ["enable-automation"])
         opts.add_experimental_option("useAutomationExtension", False)
@@ -232,10 +222,10 @@ def _chrome_service_with_wdm(log_dir: Path) -> ChromeService:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"chromedriver_{int(time.time())}.log"
     if not _WDM_OK:
-        # fallback will still try Selenium Manager, but we log the path
-        print(f"[driver-log] {log_path.as_posix()} (wdm not installed; Selenium Manager may hang on ARM64)")
+        print(f"[driver-log] {log_path.as_posix()} (wdm not installed; Selenium Manager may run)")
         return ChromeService(log_output=str(log_path))
-    driver_path = ChromeDriverManager(path=str(log_dir)).install()
+    # NOTE: no `path=` here (works across webdriver-manager versions)
+    driver_path = ChromeDriverManager().install()
     print(f"[wdm] ChromeDriver: {driver_path}")
     print(f"[driver-log] {log_path.as_posix()}")
     return ChromeService(executable_path=driver_path, log_output=str(log_path))
@@ -244,9 +234,9 @@ def _edge_service_with_wdm(log_dir: Path) -> EdgeService:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"edgedriver_{int(time.time())}.log"
     if not (_WDM_OK and EdgeService is not None):
-        print(f"[driver-log] {log_path.as_posix()} (wdm not installed; Selenium Manager may hang on ARM64)")
+        print(f"[driver-log] {log_path.as_posix()} (wdm not installed; Selenium Manager may run)")
         return EdgeService(log_output=str(log_path))
-    driver_path = EdgeChromiumDriverManager(path=str(log_dir)).install()
+    driver_path = EdgeChromiumDriverManager().install()
     print(f"[wdm] EdgeDriver: {driver_path}")
     print(f"[driver-log] {log_path.as_posix()}")
     return EdgeService(executable_path=driver_path, log_output=str(log_path))
@@ -255,7 +245,6 @@ def _edge_service_with_wdm(log_dir: Path) -> EdgeService:
 def _make_chrome_like(browser: str, browser_binary: str|None, ext_dir: str|None,
                       profile_dir: Path|None, privacy_flags, privacy_prefs, log_dir: Path):
     opts = ChromeOptions()
-    # pick binary
     if browser_binary:
         opts.binary_location = browser_binary
     else:
@@ -265,9 +254,7 @@ def _make_chrome_like(browser: str, browser_binary: str|None, ext_dir: str|None,
             opts.binary_location = auto
         else:
             print(f"[auto] {browser} binary not found; relying on default discovery")
-
     _apply_common_args(opts, profile_dir, privacy_flags, privacy_prefs)
-
     if ext_dir:
         mv = _read_manifest_version(ext_dir)
         print(f"[info] Loading unpacked extension from: {ext_dir} (manifest_version={mv})")
@@ -275,7 +262,6 @@ def _make_chrome_like(browser: str, browser_binary: str|None, ext_dir: str|None,
         opts.add_argument(f"--load-extension={ext_dir}")
     else:
         print("[info] Launching without extension.")
-
     service = _chrome_service_with_wdm(log_dir)
     return webdriver.Chrome(options=opts, service=service)
 
@@ -307,7 +293,6 @@ def _make_driver(job_browser: str, browser_binary: str|None, ext_path: str|None,
     elif b in ("chrome","brave","opera"):
         return _make_chrome_like(b, browser_binary, ext_dir, profile_dir, privacy_flags, privacy_prefs, log_dir)
     else:
-        # default to chrome-compatible
         return _make_chrome_like(b, browser_binary, ext_dir, profile_dir, privacy_flags, privacy_prefs, log_dir)
 
 # ===== main flow =====
@@ -320,7 +305,6 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     logs_dir = tmp_root / "logs"
     profile_dir.mkdir(parents=True, exist_ok=True)
 
-    # Try with extension first; fallback without
     try:
         driver = _make_driver(
             job.get("browser"), job.get("browser_binary"), job.get("extension_path"),
@@ -335,14 +319,12 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             )
         except SessionNotCreatedException as e_b:
             print(f"[tierB-error] {e_b}")
-            # Final fallback: no custom profile either
             driver = _make_driver(
                 job.get("browser"), job.get("browser_binary"), None,
                 None, job.get("privacy_flags") or [], job.get("privacy_prefs") or {}, logs_dir
             )
 
     try:
-        # Navigate (retry once if window disappears early)
         url = job["affiliate_link"]
         for attempt in (1,2):
             try:
