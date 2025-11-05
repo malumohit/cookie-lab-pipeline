@@ -10,6 +10,28 @@ browsers:
   - name: opera
     binary: "C:\\Users\\karti\\AppData\\Local\\Programs\\Opera\\opera.exe"
 
+privacy_levels:
+  firefox:
+    - name: default
+      prefs: {}
+    - name: strict
+      prefs:
+        privacy.trackingprotection.enabled: true
+        network.cookie.cookieBehavior: 1       # block 3P cookies
+    - name: isolation
+      prefs:
+        privacy.firstparty.isolate: true
+  chromium:
+    - name: default
+      flags: []
+    - name: strict
+      flags:
+        - "--incognito"
+        - "--disable-third-party-cookies"
+    - name: brave-strict
+      flags:
+        - "--brave-global-shields=3"
+
 extensions:
   - name: Honey
     version: "12.8.4"
