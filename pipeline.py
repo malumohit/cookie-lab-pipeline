@@ -29,7 +29,8 @@ def parse_args():
     p.add_argument(
         "--privacy",
         default=None,
-        help="Privacy profile name to use (must match matrix.yaml privacy_levels for the browser family)",
+        help="Privacy profile name to use (must match matrix.yaml privacy_levels for the browser family)"
+    ),
     return p.parse_args()
 
 def load_matrix(path: str) -> dict:
