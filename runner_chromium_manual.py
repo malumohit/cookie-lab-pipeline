@@ -416,6 +416,7 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Timestamp": ts,
         "Test ID": job.get("job_id", ""),
         "Browser": job.get("browser","Chromium"),
+        "Browser Privacy Level": job.get("privacy_name", ""),
         "Browser Version": browser_ver,
         "Extension": job.get("extension_name", ""),
         "Extension Version": job.get("extension_version", ""),
@@ -436,7 +437,6 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Failure Reason": "",
         "Notes": f"CookieComparisonRow=1; Tabs={len(new_tabs)}",
         "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),
-        "Browser Privacy Level": job.get("privacy_name", ""),
     }
 
     append_cookie_comparison(out_workbook, wide)
