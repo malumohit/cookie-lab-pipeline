@@ -436,6 +436,7 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Failure Reason": "",
         "Notes": f"CookieComparisonRow=1; Tabs={len(new_tabs)}",
         "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),
+        "Browser Privacy Level": job.get("privacy_name", ""),
     }
 
     append_cookie_comparison(out_workbook, wide)
