@@ -1,5 +1,5 @@
-# runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
-# with redirect+refresh capture & dynamic cookie diffs; sanitized dynamic headers
+# runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera) with redirect+refresh & dynamic cookie diffs
+# now with sanitized dynamic headers and an "Extension Popup Seen?" prompt recorded to Clean_Data.
 
 import time, hashlib, tempfile, shutil
 from urllib.parse import urlparse
@@ -45,22 +45,30 @@ def _snapshot_targets(cookies):
             out[n] = {"value": c["value"], "hash": c["value_hash"]}
     return out
 
+# ---------- header sanitizing helpers ----------
+
+def _sanitize_cookie_name(name: str) -> str:
+    if name is None:
+        return "Cookie:UNKNOWN"
+    safe = name.replace("\r", " ").replace("\n", " ").replace("\t", " ").strip()
+    return f"Cookie:{safe}" if not safe.startswith("Cookie:") else safe
+
+def _before_key(name: str) -> str:
+    return _sanitize_cookie_name(name) + " (Before)"
+
+def _after_key(name: str) -> str:
+    return _sanitize_cookie_name(name) + " (After)"
+
+# ---------- navigation/redirect helpers ----------
+
 def _get_nav_marker(driver):
-    """Rough navigation/refresh timestamp marker."""
     try:
-        return driver.execute_script(
-            "return (performance.timeOrigin||performance.timing?.navigationStart)||Date.now();"
-        )
+        return driver.execute_script("return (performance.timeOrigin||performance.timing?.navigationStart)||Date.now();")
     except Exception:
         return None
 
 def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
-    """
-    Watch briefly after the user clicks the extension button to catch:
-      - same-tab redirect (URL change)
-      - same-tab refresh (navigation timestamp change without URL change)
-      - new background tabs (collect title+URL)
-    """
+    # Watch for same-tab redirect/refresh + new tabs for a short window.
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs = []
@@ -68,7 +76,7 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
     refreshed = False
 
     while (time.time() - t0) < window_sec:
-        # new tabs
+        # detect new tabs
         try:
             handles = set(driver.window_handles)
         except Exception:
@@ -82,13 +90,13 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
             finally:
                 seen_handles.add(h)
 
-        # go back to original if possible
+        # back to original if possible
         try:
             driver.switch_to.window(list(pre_handles)[0])
         except Exception:
             pass
 
-        # same-tab redirect/refresh
+        # detect same-tab redirect/refresh
         try:
             curr_url = driver.current_url or ""
         except Exception:
@@ -104,11 +112,9 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
 
         time.sleep(0.2)
 
-    # prefer first new tab URL as "redirect" if we didn't catch same-tab redirect
     if not redirect_url and new_tabs:
         redirect_url = new_tabs[0].get("url", "") or ""
 
-    # return focus
     try:
         driver.switch_to.window(list(pre_handles)[0])
     except Exception:
@@ -120,38 +126,18 @@ def _make_driver(browser_binary: str | None, ext_path: str | None, profile_dir: 
     opts = ChromeOptions()
     if browser_binary:
         opts.binary_location = browser_binary
-    # isolated temp profile
     opts.add_argument(f"--user-data-dir={str(profile_dir)}")
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
-    # load extension (packed CRX or unpacked dir)
+    # Extension (CRX) or unpacked dir
     if ext_path:
-        p = Path(ext_path)
-        if p.is_dir():
-            opts.add_argument(f"--load-extension={p}")
+        if Path(ext_path).is_dir():
+            opts.add_argument(f"--load-extension={ext_path}")
         else:
-            # allow a single packed extension
-            opts.add_argument(f"--disable-extensions-except={p}")
-            opts.add_argument(f"--load-extension={p}")
+            opts.add_argument(f"--load-extension={Path(ext_path).parent}")
+            opts.add_argument(f"--disable-extensions-except={ext_path}")
+            opts.add_argument(f"--load-extension={ext_path}")
     return webdriver.Chrome(options=opts)
-
-# ---- header sanitizing helpers (fixes your f-string/backslash error) ----
-
-def _sanitize_cookie_name(name: str) -> str:
-    """Turn any cookie name into a safe column prefix (no newlines/tabs)."""
-    if name is None:
-        return "Cookie:UNKNOWN"
-    # replace control chars with spaces and strip
-    safe = name.replace("\r", " ").replace("\n", " ").replace("\t", " ").strip()
-    return f"Cookie:{safe}" if not safe.startswith("Cookie:") else safe
-
-def _before_key(name: str) -> str:
-    return _sanitize_cookie_name(name) + " (Before)"
-
-def _after_key(name: str) -> str:
-    return _sanitize_cookie_name(name) + " (After)"
-
-# -------------------------------------------------------------------------
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     ext_ordinal = job.get("extension_ordinal", 0)
@@ -168,10 +154,8 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 break
             except NoSuchWindowException:
                 if attempt == 1:
-                    try:
-                        driver.quit()
-                    except Exception:
-                        pass
+                    try: driver.quit()
+                    except Exception: pass
                     driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), profile_dir)
                     continue
                 else:
@@ -183,6 +167,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         print("Or type 's' + Enter to skip the coupon step for this run.")
 
         before_coupon_cookies = None
+        popup_seen = ""  # record user's answer
         caps = driver.capabilities or {}
         browser_ver = caps.get("browserVersion") or caps.get("version") or ""
         domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
@@ -196,6 +181,20 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             if ans in ("y", "yes"):
                 before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
+
+                # NEW: Ask if the extension popup is already visible
+                while True:
+                    try:
+                        q = input("Do you see the extension popup right now? [y]es / [n]o: ").strip().lower()
+                    except Exception:
+                        q = ""
+                    if q in ("y", "yes"):
+                        popup_seen = "Yes"
+                        break
+                    if q in ("n", "no"):
+                        popup_seen = "No"
+                        break
+                    print("Please type 'y' or 'n'.")
                 break
 
             elif ans in ("s", "skip"):
@@ -213,10 +212,11 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 new_tabs = []
                 redirect_url = ""
                 refreshed = False
+                popup_seen = "Skipped"  # NEW
                 goto_comparison_and_write(
                     job, src_workbook, out_workbook, driver, browser_ver, domain,
                     before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
-                    redirect_url, refreshed
+                    redirect_url, refreshed, popup_seen
                 )
                 return
 
@@ -226,7 +226,10 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
 
         # === Extension popup step ===
         print("\n=== ACTION ===")
-        print("Click your extension's Apply/Activate popup now.")
+        if popup_seen == "Yes":
+            print("Great — click the popup now to apply/activate.")
+        else:
+            print("No popup? Click the extension’s toolbar button to apply/activate.")
         print("When you've clicked it, press ENTER here.")
         pre_handles = set(driver.window_handles)
         pre_url = driver.current_url or ""
@@ -246,7 +249,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         goto_comparison_and_write(
             job, src_workbook, out_workbook, driver, browser_ver, domain,
             before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
-            redirect_url, refreshed
+            redirect_url, refreshed, popup_seen
         )
 
     finally:
@@ -263,20 +266,17 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
                               driver, browser_ver, domain,
                               before_cookies, after_cookies,
                               new_tabs, prefix,
-                              redirect_url_final, refreshed):
-    # Collect new tabs
+                              redirect_url_final, refreshed,
+                              popup_seen):
+    # Build semicolon-joined lists of any new tabs
     new_tab_urls = "; ".join([t.get("url","") for t in new_tabs if t.get("url")])
     new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
 
-    # Targets
     before_targets = _snapshot_targets(before_cookies)
     after_targets  = _snapshot_targets(after_cookies)
 
-    def val_before(name): 
-        return (prefix + (before_targets.get(name, {}).get("value", "") or "")) if before_targets.get(name) else ""
-
-    def val_after(name):  
-        return (prefix + (after_targets.get(name, {}).get("value", "") or "")) if after_targets.get(name) else ""
+    def val_before(name): return (prefix + (before_targets.get(name, {}).get("value", "") or "")) if before_targets.get(name) else ""
+    def val_after(name):  return (prefix + (after_targets.get(name, {}).get("value", "") or "")) if after_targets.get(name) else ""
 
     wide = {
         "Plugin": job.get("extension_name", ""),
@@ -285,12 +285,10 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Website": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
     }
-    # fixed target columns
     for ck in TARGET_ORDER:
         wide[f"{ck} (Before)"] = val_before(ck)
         wide[f"{ck} (After)"]  = val_after(ck)
 
-    # Dynamic: all other changed cookies → add two columns each (sanitized)
     def key(c): return (c["name"], c["domain"], c["path"])
     bmap = {key(c): c for c in before_cookies}
     amap = {key(c): c for c in after_cookies}
@@ -312,7 +310,6 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         wide[_before_key(name)] = (prefix + bvals[0]) if bvals else ""
         wide[_after_key(name)]  = (prefix + avals[0]) if avals else ""
 
-    # Counts
     added = [amap[k] for k in amap.keys() - bmap.keys()]
     changed = []
     for k in amap.keys() & bmap.keys():
@@ -330,13 +327,14 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Merchant": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
         "Coupon Applied?": "",
+        "Extension Popup Seen?": popup_seen,      # NEW
         "New Pages Opened": str(len(new_tabs)),
         "Cookies Added (count)": str(len(added)),
         "Cookies Changed (count)": str(len(changed)),
-        "Redirect URL": redirect_url_final,
+        "Redirect URL": redirect_url_final,       # NEW
         "Refreshed?": "Yes" if refreshed else "No",
-        "New Tab URLs": new_tab_urls,
-        "New Tab Titles": new_tab_titles,
+        "New Tab URLs": new_tab_urls,             # NEW
+        "New Tab Titles": new_tab_titles,         # NEW
         "HAR Path": "",
         "Screenshots": "",
         "Status": "SUCCESS",
@@ -348,7 +346,6 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
     append_cookie_comparison(out_workbook, wide)
     append_clean_data_row(src_workbook, out_workbook, clean_row)
 
-    # Diagnostics for targets + tabs
     diag_rows = []
     for ck in TARGET_ORDER:
         b = next((c for c in before_cookies if c["name"] == ck), None)
