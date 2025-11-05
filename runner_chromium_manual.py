@@ -1,9 +1,10 @@
 # runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
-# Reliable UNPACKED extension loading with validation + logging.
-# If Chrome exits on startup, we capture a chromedriver log, warn on MV2,
-# and retry once without the extension to confirm root cause.
-# Still includes: redirect/refresh watch, dynamic cookie diffs, sanitized headers,
-# and "Extension Popup Seen?" recorded to Clean_Data.
+# Hardened extension loading:
+#  - Prints ChromeDriver log path
+#  - Reads and prints manifest_version
+#  - Tries two load strategies (A: disable-extensions-except+load-extension, B: load-extension only)
+#  - If still failing, retries once without extension (so you can proceed) and tells you the log location.
+# Keeps: redirect/refresh watch, dynamic cookie diffs, sanitized headers, "Extension Popup Seen?".
 
 import json
 import time, hashlib, tempfile, shutil
@@ -28,13 +29,9 @@ from excel_writer import append_clean_data_row, append_diagnostics, append_cooki
 
 # === TARGET COOKIES (broad superset, case-insensitive, simple '*' wildcards supported) ===
 TARGET_ORDER = [
-    "NV_MC_LC",
-    "NV_MC_FC",
-    "NV_ECM_TK_LC",
-    "__attentive_utm_param_campaign",
-    "__attentive_utm_param_source",
-    "__attentive_utm_param_medium",
-    "__attentive_utm_param_term",
+    "NV_MC_LC", "NV_MC_FC", "NV_ECM_TK_LC",
+    "__attentive_utm_param_campaign", "__attentive_utm_param_source",
+    "__attentive_utm_param_medium", "__attentive_utm_param_term",
     "__attentive_utm_param_content",
 
     "campaign", "campaign_id", "campaign_date", "campaign_source", "campaign_medium", "campaign_name",
@@ -47,13 +44,9 @@ TARGET_ORDER = [
     "subid", "sub_id",
 
     "awinaffid", "awcid", "awcr", "aw_referrer", "aw_click_id",
-
     "cjevent", "cjData",
-
     "irclickid", "irgwc", "irpid", "iradid", "iradname",
-
     "sscid", "scid",
-
     "prms", "prm_expid", "prm_click",
 
     "gclid", "gclsrc", "dclid", "fbclid", "msclkid", "ttclid", "twclid", "yclid",
@@ -62,11 +55,8 @@ TARGET_ORDER = [
     "_gcl_au", "_gcl_aw", "_gcl_dc",
 
     "_fbp", "_fbc",
-
     "_uetsid", "_uetvid",
-
     "_tt_enable_cookie", "_ttp",
-
     "_pin_unauth", "_rdt_uuid",
 
     "AMCV_", "s_cc", "s_sq", "mbox", "mboxEdgeCluster",
@@ -193,10 +183,6 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
 # ---------- extension validation / logging helpers ----------
 
 def _normalize_unpacked_dir(ext_path: str | None) -> str | None:
-    """
-    Return normalized forward-slash path to an unpacked extension folder (with manifest.json),
-    or None if invalid.
-    """
     if not ext_path:
         return None
     p = Path(ext_path)
@@ -204,7 +190,6 @@ def _normalize_unpacked_dir(ext_path: str | None) -> str | None:
         print(f"[warn] Extension path does not exist: {p}")
         return None
     if p.is_file():
-        # CRX will NOT load via --load-extension in 2025 Chrome; must be unpacked.
         print(f"[warn] '{p}' is a file. Unpack the CRX and point chromium_path to the folder with manifest.json.")
         return None
     if not (p / "manifest.json").exists():
@@ -224,35 +209,24 @@ def _read_manifest_version(ext_dir: str | None) -> int | None:
 def _make_chromedriver_service(log_dir: Path) -> ChromeService:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"chromedriver_{int(time.time())}.log"
-    # Selenium 4: log_output captures driver logs
+    print(f"[driver-log] {log_path.as_posix()}")
     return ChromeService(log_output=str(log_path))
 
 def _make_edgedriver_service(log_dir: Path) -> EdgeService:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"edgedriver_{int(time.time())}.log"
+    print(f"[driver-log] {log_path.as_posix()}")
     return EdgeService(log_output=str(log_path))
 
 # ---------- driver creation ----------
 
-def _make_chrome_like_driver(browser: str,
-                             browser_binary: str | None,
-                             ext_path: str | None,
-                             profile_dir: Path,
-                             privacy_flags,
-                             privacy_prefs,
-                             log_dir: Path):
-    opts = ChromeOptions()
-    if browser_binary:
-        opts.binary_location = browser_binary
-
-    # Fresh, isolated profile
+def _apply_common_chrome_args(opts: ChromeOptions | EdgeOptions, profile_dir: Path, privacy_flags, privacy_prefs):
     opts.add_argument(f"--user-data-dir={str(profile_dir)}")
     opts.add_argument("--no-first-run")
     opts.add_argument("--no-default-browser-check")
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
-    opts.add_argument("--disable-dev-shm-usage")  # stability on some systems
-
+    opts.add_argument("--disable-dev-shm-usage")
     # Skip private modes that hide extension UI
     for f in (privacy_flags or []):
         fl = str(f).strip().lower()
@@ -260,30 +234,56 @@ def _make_chrome_like_driver(browser: str,
             print("[warn] Skipping incognito/private flags; they hide extension UI.")
             continue
         opts.add_argument(f)
-
     if privacy_prefs:
         opts.add_experimental_option("prefs", privacy_prefs)
+    # Reduce automation banner
+    try:
+        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+        opts.add_experimental_option("useAutomationExtension", False)
+    except Exception:
+        pass
 
-    # Reduce automation banner noise
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option("useAutomationExtension", False)
+def _make_chrome_like_driver(browser: str,
+                             browser_binary: str | None,
+                             ext_dir: str | None,
+                             profile_dir: Path,
+                             privacy_flags,
+                             privacy_prefs,
+                             log_dir: Path):
+    opts = ChromeOptions()
+    if browser_binary:
+        opts.binary_location = browser_binary
+    _apply_common_chrome_args(opts, profile_dir, privacy_flags, privacy_prefs)
 
-    # Load ONLY the specified UNPACKED extension
-    norm = _normalize_unpacked_dir(ext_path)
-    if norm:
-        mv = _read_manifest_version(norm)
-        if mv == 2:
-            print("[warn] Extension is Manifest V2. Modern Chrome often blocks MV2 unpacked. "
-                  "If you see a startup crash, this is likely the reason.")
-        opts.add_argument(f"--disable-extensions-except={norm}")
-        opts.add_argument(f"--load-extension={norm}")
-        print(f"[info] Loading unpacked extension from: {norm}")
+    mv = _read_manifest_version(ext_dir) if ext_dir else None
+    if ext_dir:
+        print(f"[info] Loading unpacked extension from: {ext_dir} (manifest_version={mv})")
+    else:
+        print("[info] Launching without extension.")
+
+    # Strategy A: strict (disable-extensions-except + load-extension)
+    if ext_dir:
+        opts.add_argument(f"--disable-extensions-except={ext_dir}")
+        opts.add_argument(f"--load-extension={ext_dir}")
 
     service = _make_chromedriver_service(log_dir)
-    return webdriver.Chrome(options=opts, service=service)
+    try:
+        return webdriver.Chrome(options=opts, service=service)
+    except SessionNotCreatedException:
+        # Strategy B: relaxed (load-extension only)
+        if ext_dir:
+            print("[retry] Relaunching with Strategy B: --load-extension only (no --disable-extensions-except).")
+            opts = ChromeOptions()
+            if browser_binary:
+                opts.binary_location = browser_binary
+            _apply_common_chrome_args(opts, profile_dir, privacy_flags, privacy_prefs)
+            opts.add_argument(f"--load-extension={ext_dir}")
+            service = _make_chromedriver_service(log_dir)
+            return webdriver.Chrome(options=opts, service=service)
+        raise
 
 def _make_edge_driver(browser_binary: str | None,
-                      ext_path: str | None,
+                      ext_dir: str | None,
                       profile_dir: Path,
                       privacy_flags,
                       privacy_prefs,
@@ -292,35 +292,17 @@ def _make_edge_driver(browser_binary: str | None,
         raise RuntimeError("Edge driver support not available in this environment.")
     opts = EdgeOptions()
     if browser_binary:
-        try:
-            opts.binary_location = browser_binary
-        except Exception:
-            pass
-
-    opts.add_argument(f"--user-data-dir={str(profile_dir)}")
-    opts.add_argument("--no-first-run")
-    opts.add_argument("--no-default-browser-check")
-    opts.add_argument("--disable-dev-shm-usage")
-
-    for f in (privacy_flags or []):
-        fl = str(f).strip().lower()
-        if fl in ("--incognito", "--inprivate"):
-            print("[warn] Skipping incognito/private flags; they hide extension UI.")
-            continue
-        opts.add_argument(f)
-
-    if privacy_prefs:
-        opts.add_experimental_option("prefs", privacy_prefs)
-
-    norm = _normalize_unpacked_dir(ext_path)
-    if norm:
-        mv = _read_manifest_version(norm)
-        if mv == 2:
-            print("[warn] Extension is Manifest V2. Edge may also block MV2 unpacked.")
-        opts.add_argument(f"--disable-extensions-except={norm}")
-        opts.add_argument(f"--load-extension={norm}")
-        print(f"[info] Loading unpacked extension (Edge) from: {norm}")
-
+        try: opts.binary_location = browser_binary
+        except Exception: pass
+    _apply_common_chrome_args(opts, profile_dir, privacy_flags, privacy_prefs)
+    mv = _read_manifest_version(ext_dir) if ext_dir else None
+    if ext_dir:
+        print(f"[info] Loading unpacked extension (Edge) from: {ext_dir} (manifest_version={mv})")
+        # Edge generally supports the same flags
+        opts.add_argument(f"--disable-extensions-except={ext_dir}")
+        opts.add_argument(f"--load-extension={ext_dir}")
+    else:
+        print("[info] Launching Edge without extension.")
     service = _make_edgedriver_service(log_dir)
     return webdriver.Edge(options=opts, service=service)
 
@@ -331,14 +313,15 @@ def _make_driver(job_browser: str,
                  privacy_flags,
                  privacy_prefs,
                  log_dir: Path):
+    # ext_path must be an unpacked dir; validate/normalize
+    ext_dir = _normalize_unpacked_dir(ext_path)
     b = (job_browser or "").lower()
     if b == "edge":
-        return _make_edge_driver(browser_binary, ext_path, profile_dir, privacy_flags, privacy_prefs, log_dir)
+        return _make_edge_driver(browser_binary, ext_dir, profile_dir, privacy_flags, privacy_prefs, log_dir)
     elif b in ("chrome", "brave", "opera"):
-        return _make_chrome_like_driver(b, browser_binary, ext_path, profile_dir, privacy_flags, privacy_prefs, log_dir)
+        return _make_chrome_like_driver(b, browser_binary, ext_dir, profile_dir, privacy_flags, privacy_prefs, log_dir)
     else:
-        # Default to Chrome-like for unknown chromium family names
-        return _make_chrome_like_driver(b, browser_binary, ext_path, profile_dir, privacy_flags, privacy_prefs, log_dir)
+        return _make_chrome_like_driver(b, browser_binary, ext_dir, profile_dir, privacy_flags, privacy_prefs, log_dir)
 
 # ---------- main flow ----------
 
@@ -364,8 +347,9 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 logs_dir,
             )
         except SessionNotCreatedException as e:
-            # Retry WITHOUT extension to prove root cause
             print(f"[error] Chrome session failed to start with extension. Retrying once without extension. Details: {e}")
+            print(f"[hint] Open the latest ChromeDriver log under: {logs_dir.as_posix()}")
+            # Retry WITHOUT extension to confirm root cause
             driver = _make_driver(
                 job.get("browser"),
                 job.get("browser_binary"),
@@ -375,8 +359,6 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 job.get("privacy_prefs") or {},
                 logs_dir,
             )
-            print("[hint] If this second launch succeeds, the extension is the cause (likely MV2 or invalid unpack). "
-                  f"Check driver log files in: {logs_dir}")
 
         # Navigate (retry once if window disappeared)
         url = job["affiliate_link"]
@@ -386,10 +368,8 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 break
             except NoSuchWindowException:
                 if attempt == 1:
-                    try:
-                        driver.quit()
-                    except Exception:
-                        pass
+                    try: driver.quit()
+                    except Exception: pass
                     driver = _make_driver(
                         job.get("browser"),
                         job.get("browser_binary"),
@@ -430,11 +410,9 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                     except Exception:
                         q = ""
                     if q in ("y", "yes"):
-                        popup_seen = "Yes"
-                        break
+                        popup_seen = "Yes"; break
                     if q in ("n", "no"):
-                        popup_seen = "No"
-                        break
+                        popup_seen = "No"; break
                     print("Please type 'y' or 'n'.")
                 break
 
@@ -467,11 +445,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
 
         # === Extension popup step ===
         print("\n=== ACTION ===")
-        if popup_seen == "Yes":
-            print("Great — click the popup now to apply/activate.")
-        else:
-            print("No popup? Click the extension’s toolbar button to apply/activate.")
-        print("When you've clicked it, press ENTER here.")
+        print("Click the popup (or the toolbar icon) to apply/activate, then press ENTER here.")
         pre_handles = set(driver.window_handles)
         pre_url = driver.current_url or ""
         pre_nav_ts = _get_nav_marker(driver)
