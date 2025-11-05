@@ -1,8 +1,6 @@
-# runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
-# with redirect+refresh & dynamic cookie diffs
-
+# runner_chromium_manual.py — manual-browse runner (Chromium family)
 import time, hashlib, tempfile, shutil
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, urlsplit
 from pathlib import Path
 from datetime import datetime
 
@@ -21,10 +19,8 @@ TARGET_ORDER = [
 ]
 TARGET_SET = set(TARGET_ORDER)
 
-
 def _h(v: str) -> str:
     return hashlib.sha256((v or "").encode("utf-8")).hexdigest()[:16]
-
 
 def _cookie_frame_full(c: dict) -> dict:
     return {
@@ -39,7 +35,6 @@ def _cookie_frame_full(c: dict) -> dict:
         "sameSite": c.get("sameSite"),
     }
 
-
 def _snapshot_targets(cookies):
     out = {}
     for c in cookies:
@@ -48,18 +43,12 @@ def _snapshot_targets(cookies):
             out[n] = {"value": c["value"], "hash": c["value_hash"]}
     return out
 
-
-# Simple marker to detect refresh/redirect on same tab
 def _get_nav_marker(driver):
     try:
-        return driver.execute_script(
-            "return (performance.timeOrigin||performance.timing.navigationStart)||Date.now();"
-        )
+        return driver.execute_script("return (performance.timeOrigin||performance.timing.navigationStart)||Date.now();")
     except Exception:
         return None
 
-
-# Observe redirect/refresh + new tabs for a short window right after pressing the extension button
 def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
     t0 = time.time()
     seen_handles = set(pre_handles)
@@ -68,7 +57,6 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
     refreshed = False
 
     while (time.time() - t0) < window_sec:
-        # detect new tabs
         try:
             handles = set(driver.window_handles)
         except Exception:
@@ -82,9 +70,8 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
             finally:
                 seen_handles.add(h)
 
-        # detect redirect/refresh on current tab
         try:
-            driver.switch_to.window(list(pre_handles)[0])  # back to original if possible
+            driver.switch_to.window(list(pre_handles)[0])
         except Exception:
             pass
 
@@ -94,84 +81,83 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
             curr_url = ""
 
         nav_ts = _get_nav_marker(driver)
-
-        # same-tab redirect
         if curr_url and pre_url and curr_url != pre_url and not redirect_url:
             redirect_url = curr_url
 
-        # same URL but a navigation occurred -> refresh
         if nav_ts is not None and pre_nav_ts is not None and nav_ts != pre_nav_ts:
             if (not redirect_url) and (curr_url == pre_url):
                 refreshed = True
 
         time.sleep(0.2)
 
-    # try to return focus to original handle if we still have it
+    if not redirect_url and new_tabs:
+        redirect_url = new_tabs[0].get("url", "")
+
     try:
-        orig = list(pre_handles)[0]
-        driver.switch_to.window(orig)
+        driver.switch_to.window(list(pre_handles)[0])
     except Exception:
         pass
 
     return redirect_url, refreshed, new_tabs
 
+def _sanitize_header(name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        return "Cookie:__COOKIE_UNNAMED__"
+    return f"Cookie:{name.replace('\n',' ').replace('\r',' ')}"
 
-def _make_driver(browser_binary: str | None, ext_path: str | None, profile_dir: Path):
+def _extract_utm_campaign(url: str) -> str:
+    try:
+        q = parse_qs(urlsplit(url).query)
+        return q.get("utm_campaign", [""])[0]
+    except Exception:
+        return ""
+
+def _make_driver(browser_binary: str | None, ext_path: str | None, flags: list[str] | None, profile_dir: Path):
     opts = ChromeOptions()
     if browser_binary:
         opts.binary_location = browser_binary
-
-    # isolate state per run
+    # clean profile per run
     opts.add_argument(f"--user-data-dir={str(profile_dir)}")
-    # keep things stable/quiet
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
-
-    # Load extension: allow CRX path or unpacked dir
+    for flag in (flags or []):
+        opts.add_argument(flag)
+    # extension load (packed/unpacked)
     if ext_path:
         p = Path(ext_path)
         if p.is_dir():
-            # unpacked directory
             opts.add_argument(f"--load-extension={p}")
         else:
-            # CRX file — enable only this extension
             opts.add_argument(f"--disable-extensions-except={p}")
             opts.add_argument(f"--load-extension={p}")
-
     return webdriver.Chrome(options=opts)
-
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     ext_ordinal = job.get("extension_ordinal", 0)
     prefix = f"{ext_ordinal}." if ext_ordinal else ""
+    privacy_name = job.get("privacy_name", "default")
 
-    # Fresh temporary profile (isolated cookies/cache)
     profile_dir = Path(tempfile.mkdtemp(prefix=f"{job.get('browser','chromium')}_profile_"))
-    driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), profile_dir)
+    driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), job.get("privacy_flags"), profile_dir)
     try:
-        # Navigate (retry once if window disappeared)
         url = job["affiliate_link"]
         for attempt in (1, 2):
             try:
-                driver.get(url)
-                break
+                driver.get(url); break
             except NoSuchWindowException:
                 if attempt == 1:
-                    try:
-                        driver.quit()
-                    except Exception:
-                        pass
-                    driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), profile_dir)
+                    try: driver.quit()
+                    except Exception: pass
+                    driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), job.get("privacy_flags"), profile_dir)
                     continue
-                else:
-                    raise
+                raise
 
         print("\n=== MANUAL NAVIGATION ===")
-        print("Browser opened. Please navigate to CHECKOUT (log in / guest as needed).")
-        print("When you are at the CHECKOUT page, type 'y' + Enter to continue.")
-        print("Or type 's' + Enter to skip the coupon step for this run.")
-
+        print("Navigate to CHECKOUT. When there, type 'y'. 's' to skip coupon step.")
         before_coupon_cookies = None
+        ts_before = ""
+        popup_answer = "Unknown"
         caps = driver.capabilities or {}
         browser_ver = caps.get("browserVersion") or caps.get("version") or ""
         domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
@@ -183,104 +169,84 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 ans = ""
 
             if ans in ("y", "yes"):
+                try:
+                    popup_ans = input("Do you see the extension popup? [y/n]: ").strip().lower()
+                    popup_answer = "Yes" if popup_ans in ("y","yes") else "No"
+                except Exception:
+                    popup_answer = "Unknown"
+
+                ts_before = datetime.utcnow().isoformat(timespec="seconds") + "Z"
                 before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
                 break
 
             elif ans in ("s", "skip"):
+                ts_before = datetime.utcnow().isoformat(timespec="seconds") + "Z"
                 try:
                     before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
-                except Exception as e:
-                    print(f"Warning: could not read cookies before skip ({e}). Proceeding empty.")
-                    before_coupon_cookies = []
-                try:
-                    domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
                 except Exception:
-                    domain = job.get("affiliate_link", "")
-                print("Skipping coupon step for this run as requested.")
+                    before_coupon_cookies = []
+                domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
+
+                ts_after = ts_before
                 after_coupon_cookies = before_coupon_cookies
                 new_tabs = []
-                redirect_url_final = ""
+                redirect_url = ""
                 refreshed = False
                 goto_comparison_and_write(
                     job, src_workbook, out_workbook, driver, browser_ver, domain,
                     before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
-                    redirect_url_final, refreshed
+                    redirect_url, refreshed, ts_before, ts_after, popup_answer, privacy_name
                 )
                 return
-
             else:
-                print("OK, I'll keep waiting. (Tip: you can press 's' to skip.)")
+                print("OK, waiting… (or press 's' to skip)")
                 time.sleep(5)
 
-        # === Extension popup step ===
         print("\n=== ACTION ===")
-        print("Click your extension's Apply/Activate popup now.")
-        print("When you've clicked it, press ENTER here.")
+        print("Click the extension’s Apply/Activate. Press ENTER here after you click.")
         pre_handles = set(driver.window_handles)
         pre_url = driver.current_url or ""
         pre_nav_ts = _get_nav_marker(driver)
+        try: input()
+        except Exception: pass
 
-        # safe defaults so we never reference unassigned locals
-        redirect_url_final = ""
-        refreshed = False
-        new_tabs = []
+        redirect_url, refreshed, new_tabs = _observe_redirect_refresh_and_tabs(
+            driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))
+        )
 
-        try:
-            input()
-        except Exception:
-            pass
-
-        # Observe redirects/refresh/new tabs for a short window (fast-closing tabs/refreshes captured)
-        try:
-            redirect_url, refreshed, new_tabs = _observe_redirect_refresh_and_tabs(
-                driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))
-            )
-            # Promote first new-tab URL if no same-tab redirect was detected
-            redirect_url_final = redirect_url
-            if not redirect_url_final and new_tabs:
-                first = new_tabs[0]
-                redirect_url_final = first.get("url", "")
-        except Exception as e:
-            print(f"Note: redirect observation failed ({e}); continuing with defaults.")
-
-        # AFTER snapshot
+        ts_after = datetime.utcnow().isoformat(timespec="seconds") + "Z"
         after_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
 
         goto_comparison_and_write(
             job, src_workbook, out_workbook, driver, browser_ver, domain,
             before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
-            redirect_url_final, refreshed
+            redirect_url, refreshed, ts_before, ts_after, popup_answer, privacy_name
         )
 
     finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-        try:
-            shutil.rmtree(profile_dir, ignore_errors=True)
-        except Exception:
-            pass
-
+        try: driver.quit()
+        except Exception: pass
+        try: shutil.rmtree(profile_dir, ignore_errors=True)
+        except Exception: pass
 
 def goto_comparison_and_write(job, src_workbook, out_workbook,
                               driver, browser_ver, domain,
                               before_cookies, after_cookies,
                               new_tabs, prefix,
-                              redirect_url_final, refreshed):
-    # Build semicolon-joined lists of any new tabs
+                              redirect_url_final, refreshed,
+                              ts_before, ts_after, popup_answer, privacy_name):
     new_tab_urls = "; ".join([t.get("url","") for t in new_tabs if t.get("url")])
     new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
 
     before_targets = _snapshot_targets(before_cookies)
     after_targets  = _snapshot_targets(after_cookies)
 
-    def val_before(name):
-        return (prefix + (before_targets.get(name, {}).get("value", "") or "")) if before_targets.get(name) else ""
+    def val_before(name): return (prefix + (before_targets.get(name, {}).get("value", "") or "")) if before_targets.get(name) else ""
+    def val_after(name):  return (prefix + (after_targets.get(name, {}).get("value", "") or "")) if after_targets.get(name) else ""
 
-    def val_after(name):
-        return (prefix + (after_targets.get(name, {}).get("value", "") or "")) if after_targets.get(name) else ""
+    campaign_before = before_targets.get("__attentive_utm_param_campaign", {}).get("value") or _extract_utm_campaign(job.get("affiliate_link",""))
+    campaign_after  = after_targets.get("__attentive_utm_param_campaign", {}).get("value") or _extract_utm_campaign(driver.current_url or "")
 
     wide = {
         "Plugin": job.get("extension_name", ""),
@@ -288,41 +254,42 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Browser Version": browser_ver,
         "Website": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
+        "Privacy Level": privacy_name,
+        **{f"{ck} (Before)": val_before(ck) for ck in TARGET_ORDER},
+        **{f"{ck} (After)" : val_after(ck)  for ck in TARGET_ORDER},
+        "Campaign (Before)": campaign_before,
+        "Campaign Date (Before)": ts_before,
+        "Campaign (After)": campaign_after,
+        "Campaign Date (After)": ts_after,
     }
-    for ck in TARGET_ORDER:
-        wide[f"{ck} (Before)"] = val_before(ck)
-        wide[f"{ck} (After)"]  = val_after(ck)
 
-    # Dynamic columns for any *other* cookie names that changed
     def key(c): return (c["name"], c["domain"], c["path"])
     bmap = {key(c): c for c in before_cookies}
     amap = {key(c): c for c in after_cookies}
 
     changed_names = set()
-    for k in amap.keys() - bmap.keys():
-        changed_names.add(amap[k]["name"])  # added
-    for k in bmap.keys() - amap.keys():
-        changed_names.add(bmap[k]["name"])  # removed
+    for k in amap.keys() - bmap.keys(): changed_names.add(amap[k]["name"])
+    for k in bmap.keys() - amap.keys(): changed_names.add(bmap[k]["name"])
     for k in amap.keys() & bmap.keys():
         if amap[k]["value_hash"] != bmap[k]["value_hash"]:
             changed_names.add(amap[k]["name"])
 
     for name in sorted(changed_names):
-        if name in TARGET_SET:
-            continue
+        if name in TARGET_SET: continue
+        hdr_b = f"{_sanitize_header(name)} (Before)"
+        hdr_a = f"{_sanitize_header(name)} (After)"
         bvals = [c["value"] for c in before_cookies if c["name"] == name]
         avals = [c["value"] for c in after_cookies  if c["name"] == name]
-        wide[f"{name} (Before)"] = (prefix + bvals[0]) if bvals else ""
-        wide[f"{name} (After)"]  = (prefix + avals[0]) if avals else ""
+        wide[hdr_b] = (prefix + bvals[0]) if bvals else ""
+        wide[hdr_a] = (prefix + avals[0]) if avals else ""
 
-    # Diagnostics summary counts
     added = [amap[k] for k in amap.keys() - bmap.keys()]
     changed = []
     for k in amap.keys() & bmap.keys():
         if amap[k]["value_hash"] != bmap[k]["value_hash"]:
             changed.append({"before": bmap[k], "after": amap[k]})
 
-    ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    ts = ts_after
     clean_row = {
         "Timestamp": ts,
         "Test ID": job.get("job_id", ""),
@@ -332,11 +299,11 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Extension Version": job.get("extension_version", ""),
         "Merchant": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
-        "Coupon Applied?": "",
+        "Privacy Level": privacy_name,
+        "Popup Shown?": popup_answer,
         "New Pages Opened": str(len(new_tabs)),
         "Cookies Added (count)": str(len(added)),
         "Cookies Changed (count)": str(len(changed)),
-        # redirect/refresh capture
         "Redirect URL": redirect_url_final,
         "Refreshed?": "Yes" if refreshed else "No",
         "New Tab URLs": new_tab_urls,
@@ -352,7 +319,6 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
     append_cookie_comparison(out_workbook, wide)
     append_clean_data_row(src_workbook, out_workbook, clean_row)
 
-    # Per-cookie diagnostics for targets + each new tab as a row
     diag_rows = []
     for ck in TARGET_ORDER:
         b = next((c for c in before_cookies if c["name"] == ck), None)
@@ -360,12 +326,9 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         b_hash = b and b.get("value_hash")
         a_hash = a and a.get("value_hash")
         change = "UNCHANGED"
-        if b and not a:
-            change = "REMOVED"
-        elif a and not b:
-            change = "ADDED"
-        elif b and a and b_hash != a_hash:
-            change = "CHANGED"
+        if b and not a: change = "REMOVED"
+        elif a and not b: change = "ADDED"
+        elif b and a and b_hash != a_hash: change = "CHANGED"
         if change != "UNCHANGED":
             diag_rows.append({
                 "Test ID": clean_row["Test ID"],
@@ -397,5 +360,4 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
             "Observed At": ts
         })
     append_diagnostics(out_workbook, diag_rows)
-
-    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (manual Chromium, with redirect/refresh and dynamic cookie diffs).")
+    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (Chromium, temp profile, privacy).")
