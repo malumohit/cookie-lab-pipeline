@@ -1,5 +1,6 @@
-# runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera) with redirect+refresh & dynamic cookie diffs
-# now with sanitized dynamic headers and an "Extension Popup Seen?" prompt recorded to Clean_Data.
+# runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
+# redirect+refresh watch, dynamic cookie diffs, sanitized headers,
+# "Extension Popup Seen?" recorded, and EXPANDED, case-insensitive target cookies with wildcard support.
 
 import time, hashlib, tempfile, shutil
 from urllib.parse import urlparse
@@ -12,14 +13,100 @@ from selenium.common.exceptions import NoSuchWindowException
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
 
+# === TARGET COOKIES (broad superset, case-insensitive, simple '*' wildcards supported) ===
 TARGET_ORDER = [
+    # Newegg / Attentive you already had
     "NV_MC_LC",
     "NV_MC_FC",
+    "NV_ECM_TK_LC",
     "__attentive_utm_param_campaign",
     "__attentive_utm_param_source",
-    "NV_ECM_TK_LC",
+    "__attentive_utm_param_medium",
+    "__attentive_utm_param_term",
+    "__attentive_utm_param_content",
+
+    # Campaign keys you asked to always track
+    "campaign",
+    "campaign_id",
+    "campaign_date",
+    "campaign_source",
+    "campaign_medium",
+    "campaign_name",
+
+    # UTM keys (some sites mirror these into cookies)
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+
+    # Generic affiliate keys (varies by merchant/network)
+    "affid", "aff_id", "affiliate", "affiliate_id", "affiliate_source",
+    "affsource", "aff_source", "affname",
+    "aff_sub", "aff_sub2", "aff_sub3", "aff_sub4", "aff_sub5",
+    "subid", "sub_id",
+
+    # Awin
+    "awinaffid", "awcid", "awcr", "aw_referrer", "aw_click_id",
+
+    # CJ
+    "cjevent", "cjData",
+
+    # Impact
+    "irclickid", "irgwc", "irpid", "iradid", "iradname",
+
+    # ShareASale
+    "sscid", "scid",
+
+    # Partnerize
+    "prms", "prm_expid", "prm_click",
+
+    # Ad platform click IDs
+    "gclid", "gclsrc", "dclid", "fbclid", "msclkid", "ttclid", "twclid", "yclid",
+
+    # Google Analytics (wildcards for GA4 container names)
+    "_ga", "_ga_*", "_gid", "_gat", "_gat_*",
+    "_gcl_au", "_gcl_aw", "_gcl_dc",
+
+    # Meta/Facebook
+    "_fbp", "_fbc",
+
+    # Microsoft Ads
+    "_uetsid", "_uetvid",
+
+    # TikTok
+    "_tt_enable_cookie", "_ttp",
+
+    # Pinterest / Reddit
+    "_pin_unauth", "_rdt_uuid",
+
+    # Adobe Analytics / Target (common subset)
+    "AMCV_", "s_cc", "s_sq", "mbox", "mboxEdgeCluster",
+
+    # Other frequent marketing keys
+    "ref", "referrer", "source", "campaignCode",
+    "promo", "promocode", "coupon", "coupon_code",
+
+    # Session-like keys that often change around checkout/coupons
+    "session_id", "sessionid", "sid",
 ]
-TARGET_SET = set(TARGET_ORDER)
+
+# Build case-insensitive canonical map + wildcard prefixes
+_CANON = {name.lower(): name for name in TARGET_ORDER if not name.endswith("*")}
+_PREFIXES = [name[:-1].lower() for name in TARGET_ORDER if name.endswith("*")]
+
+def _is_target_name(raw_name: str) -> str | None:
+    """Return canonical target name if raw_name matches (case-insensitive; '*' means 'starts with')."""
+    if not raw_name:
+        return None
+    ln = raw_name.lower()
+    if ln in _CANON:
+        return _CANON[ln]
+    for p in _PREFIXES:
+        if ln.startswith(p):
+            # keep the actual cookie name so each GA-style key becomes its own column
+            return raw_name
+    return None
 
 def _h(v: str) -> str:
     return hashlib.sha256((v or "").encode("utf-8")).hexdigest()[:16]
@@ -38,11 +125,16 @@ def _cookie_frame_full(c: dict) -> dict:
     }
 
 def _snapshot_targets(cookies):
+    """
+    Return dict: canonical_name -> {'value','hash'} for target cookies (case-insensitive; wildcards expand to actual names).
+    """
     out = {}
     for c in cookies:
-        n = c["name"]
-        if n in TARGET_SET:
-            out[n] = {"value": c["value"], "hash": c["value_hash"]}
+        cname = c.get("name") or ""
+        canon = _is_target_name(cname)
+        if canon:
+            val = c.get("value") or ""
+            out[canon] = {"value": val, "hash": _h(val)}
     return out
 
 # ---------- header sanitizing helpers ----------
@@ -68,7 +160,6 @@ def _get_nav_marker(driver):
         return None
 
 def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
-    # Watch for same-tab redirect/refresh + new tabs for a short window.
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs = []
@@ -182,7 +273,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
 
-                # NEW: Ask if the extension popup is already visible
+                # Ask if the extension popup is visible now
                 while True:
                     try:
                         q = input("Do you see the extension popup right now? [y]es / [n]o: ").strip().lower()
@@ -212,7 +303,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 new_tabs = []
                 redirect_url = ""
                 refreshed = False
-                popup_seen = "Skipped"  # NEW
+                popup_seen = "Skipped"
                 goto_comparison_and_write(
                     job, src_workbook, out_workbook, driver, browser_ver, domain,
                     before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
@@ -285,10 +376,12 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Website": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
     }
-    for ck in TARGET_ORDER:
+    # TARGETS first
+    for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
         wide[f"{ck} (Before)"] = val_before(ck)
         wide[f"{ck} (After)"]  = val_after(ck)
 
+    # Dynamic: add all NON-target cookies that changed (added/removed/value-changed)
     def key(c): return (c["name"], c["domain"], c["path"])
     bmap = {key(c): c for c in before_cookies}
     amap = {key(c): c for c in after_cookies}
@@ -302,14 +395,16 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         if amap[k]["value_hash"] != bmap[k]["value_hash"]:
             changed_names.add(amap[k]["name"])
 
-    for name in sorted(changed_names):
-        if name in TARGET_SET:
+    for name in sorted(changed_names, key=lambda x: (x or "").lower()):
+        # skip if this name is a target (case-insensitive + wildcards)
+        if _is_target_name(name):
             continue
         bvals = [c["value"] for c in before_cookies if c["name"] == name]
         avals = [c["value"] for c in after_cookies  if c["name"] == name]
         wide[_before_key(name)] = (prefix + bvals[0]) if bvals else ""
         wide[_after_key(name)]  = (prefix + avals[0]) if avals else ""
 
+    # Diagnostics/counts
     added = [amap[k] for k in amap.keys() - bmap.keys()]
     changed = []
     for k in amap.keys() & bmap.keys():
@@ -347,7 +442,8 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
     append_clean_data_row(src_workbook, out_workbook, clean_row)
 
     diag_rows = []
-    for ck in TARGET_ORDER:
+    # record target cookie diffs in Diagnostics
+    for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
         b = next((c for c in before_cookies if c["name"] == ck), None)
         a = next((c for c in after_cookies  if c["name"] == ck), None)
         b_hash = b and b.get("value_hash")
