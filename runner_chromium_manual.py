@@ -200,47 +200,50 @@ def _ext_is_crx(path: str) -> bool:
 def _make_chrome_like_driver(browser: str, browser_binary: str | None, ext_path: str | None,
                              profile_dir: Path, privacy_flags, privacy_prefs):
     """
-    Create a ChromeDriver session that can also point to Brave/Opera by setting binary_location.
-    Note: Opera support is best-effort; OperaChromiumDriver is deprecated.
+    Prefer UNPACKED extensions via --load-extension plus --disable-extensions-except.
+    This is far more reliable than add_extension(.crx) on many machines/policies.
     """
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
     opts = ChromeOptions()
     if browser_binary:
         opts.binary_location = browser_binary
 
-    # fresh temp profile per run
+    # Fresh temp profile each run
     opts.add_argument(f"--user-data-dir={str(profile_dir)}")
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
 
-    # apply privacy flags
+    # Privacy flags/prefs
     for f in privacy_flags or []:
         opts.add_argument(f)
         if f == "--incognito":
-            print("[warn] --incognito disables extensions unless the user manually enables 'Allow in incognito'. "
-                  "Your extension UI may not appear in strict/incognito.")
-
-    # apply privacy prefs (e.g., third-party cookie blocking)
+            print("[warn] --incognito hides extensions unless explicitly allowed; UI may not show.")
     if privacy_prefs:
-        # Example: {"profile.block_third_party_cookies": True}
         opts.add_experimental_option("prefs", privacy_prefs)
 
-    # Install extension
+    # === Extension loading (prefer UNPACKED folder) ===
     if ext_path:
         p = Path(ext_path)
         if p.exists():
-            if _ext_is_crx(ext_path):
-                # Proper way to load a packaged extension
-                opts.add_extension(ext_path)
-            elif p.is_dir():
-                # Unpacked extension directory
-                opts.add_argument(f"--load-extension={ext_path}")
+            if p.is_dir():
+                # Unpacked folder: load ONLY this extension (reliable)
+                # Note: multiple unpacked paths can be comma-separated.
+                opts.add_argument(f"--disable-extensions-except={str(p)}")
+                opts.add_argument(f"--load-extension={str(p)}")
+            elif p.suffix.lower() == ".crx":
+                # Fallback: try packaged; but unpacked is strongly recommended
+                print("[info] Using CRX. If it doesn't show, unpack it and point chromium_path to the folder.")
+                try:
+                    opts.add_extension(str(p))
+                except Exception as e:
+                    print(f"[warn] add_extension(.crx) failed: {e}. "
+                          f"Unpack the CRX and use --load-extension instead.")
             else:
-                # Fallback: try as unpacked parent (rare)
-                opts.add_argument(f"--load-extension={p.parent}")
+                print(f"[warn] Extension path exists but is neither folder nor .crx: {p}")
         else:
-            print(f"[warn] Extension path does not exist: {ext_path}")
+            print(f"[warn] Extension path does not exist: {p}")
 
-    # Launch
+    # Launch a Chrome-like driver (works for Chrome/Brave/Opera with correct binary_location)
     return webdriver.Chrome(options=opts)
 
 def _make_edge_driver(browser_binary: str | None, ext_path: str | None,
