@@ -36,7 +36,7 @@ extensions:
   - name: Honey
     version: "12.8.4"
     firefox_path:  "C:\\cookie-lab\\extensions\\firefox\\honey.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Honey 18.2.1.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Honey 18.2.1"
 
   - name: Rakuten
     version: "5.67.3"
