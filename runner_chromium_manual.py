@@ -1,6 +1,8 @@
 # runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
-# redirect+refresh watch, dynamic cookie diffs, sanitized headers,
-# "Extension Popup Seen?" recorded, and EXPANDED, case-insensitive target cookies with wildcard support.
+# Fixes: reliable extension install for .crx, correct driver per browser,
+# proper privacy flags/prefs application, warning about incognito disabling extensions.
+# Also keeps redirect/refresh watch, dynamic cookie diffs, sanitized headers,
+# and "Extension Popup Seen?" recording.
 
 import time, hashlib, tempfile, shutil
 from urllib.parse import urlparse
@@ -8,14 +10,19 @@ from pathlib import Path
 from datetime import datetime
 
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.common.exceptions import NoSuchWindowException
+
+# Chrome / Edge option classes
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+try:
+    from selenium.webdriver.edge.options import Options as EdgeOptions
+except Exception:
+    EdgeOptions = None  # Edge not available in this environment
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
 
 # === TARGET COOKIES (broad superset, case-insensitive, simple '*' wildcards supported) ===
 TARGET_ORDER = [
-    # Newegg / Attentive you already had
     "NV_MC_LC",
     "NV_MC_FC",
     "NV_ECM_TK_LC",
@@ -25,69 +32,43 @@ TARGET_ORDER = [
     "__attentive_utm_param_term",
     "__attentive_utm_param_content",
 
-    # Campaign keys you asked to always track
-    "campaign",
-    "campaign_id",
-    "campaign_date",
-    "campaign_source",
-    "campaign_medium",
-    "campaign_name",
+    "campaign", "campaign_id", "campaign_date", "campaign_source", "campaign_medium", "campaign_name",
 
-    # UTM keys (some sites mirror these into cookies)
-    "utm_source",
-    "utm_medium",
-    "utm_campaign",
-    "utm_term",
-    "utm_content",
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
 
-    # Generic affiliate keys (varies by merchant/network)
     "affid", "aff_id", "affiliate", "affiliate_id", "affiliate_source",
     "affsource", "aff_source", "affname",
     "aff_sub", "aff_sub2", "aff_sub3", "aff_sub4", "aff_sub5",
     "subid", "sub_id",
 
-    # Awin
     "awinaffid", "awcid", "awcr", "aw_referrer", "aw_click_id",
 
-    # CJ
     "cjevent", "cjData",
 
-    # Impact
     "irclickid", "irgwc", "irpid", "iradid", "iradname",
 
-    # ShareASale
     "sscid", "scid",
 
-    # Partnerize
     "prms", "prm_expid", "prm_click",
 
-    # Ad platform click IDs
     "gclid", "gclsrc", "dclid", "fbclid", "msclkid", "ttclid", "twclid", "yclid",
 
-    # Google Analytics (wildcards for GA4 container names)
     "_ga", "_ga_*", "_gid", "_gat", "_gat_*",
     "_gcl_au", "_gcl_aw", "_gcl_dc",
 
-    # Meta/Facebook
     "_fbp", "_fbc",
 
-    # Microsoft Ads
     "_uetsid", "_uetvid",
 
-    # TikTok
     "_tt_enable_cookie", "_ttp",
 
-    # Pinterest / Reddit
     "_pin_unauth", "_rdt_uuid",
 
-    # Adobe Analytics / Target (common subset)
     "AMCV_", "s_cc", "s_sq", "mbox", "mboxEdgeCluster",
 
-    # Other frequent marketing keys
     "ref", "referrer", "source", "campaignCode",
     "promo", "promocode", "coupon", "coupon_code",
 
-    # Session-like keys that often change around checkout/coupons
     "session_id", "sessionid", "sid",
 ]
 
@@ -125,9 +106,6 @@ def _cookie_frame_full(c: dict) -> dict:
     }
 
 def _snapshot_targets(cookies):
-    """
-    Return dict: canonical_name -> {'value','hash'} for target cookies (case-insensitive; wildcards expand to actual names).
-    """
     out = {}
     for c in cookies:
         cname = c.get("name") or ""
@@ -213,29 +191,130 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
 
     return redirect_url, refreshed, new_tabs
 
-def _make_driver(browser_binary: str | None, ext_path: str | None, profile_dir: Path):
+# ---------- driver creation ----------
+
+def _ext_is_crx(path: str) -> bool:
+    p = Path(path)
+    return p.suffix.lower() == ".crx"
+
+def _make_chrome_like_driver(browser: str, browser_binary: str | None, ext_path: str | None,
+                             profile_dir: Path, privacy_flags, privacy_prefs):
+    """
+    Create a ChromeDriver session that can also point to Brave/Opera by setting binary_location.
+    Note: Opera support is best-effort; OperaChromiumDriver is deprecated.
+    """
     opts = ChromeOptions()
     if browser_binary:
         opts.binary_location = browser_binary
+
+    # fresh temp profile per run
     opts.add_argument(f"--user-data-dir={str(profile_dir)}")
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
-    # Extension (CRX) or unpacked dir
+
+    # apply privacy flags
+    for f in privacy_flags or []:
+        opts.add_argument(f)
+        if f == "--incognito":
+            print("[warn] --incognito disables extensions unless the user manually enables 'Allow in incognito'. "
+                  "Your extension UI may not appear in strict/incognito.")
+
+    # apply privacy prefs (e.g., third-party cookie blocking)
+    if privacy_prefs:
+        # Example: {"profile.block_third_party_cookies": True}
+        opts.add_experimental_option("prefs", privacy_prefs)
+
+    # Install extension
     if ext_path:
-        if Path(ext_path).is_dir():
-            opts.add_argument(f"--load-extension={ext_path}")
+        p = Path(ext_path)
+        if p.exists():
+            if _ext_is_crx(ext_path):
+                # Proper way to load a packaged extension
+                opts.add_extension(ext_path)
+            elif p.is_dir():
+                # Unpacked extension directory
+                opts.add_argument(f"--load-extension={ext_path}")
+            else:
+                # Fallback: try as unpacked parent (rare)
+                opts.add_argument(f"--load-extension={p.parent}")
         else:
-            opts.add_argument(f"--load-extension={Path(ext_path).parent}")
-            opts.add_argument(f"--disable-extensions-except={ext_path}")
-            opts.add_argument(f"--load-extension={ext_path}")
+            print(f"[warn] Extension path does not exist: {ext_path}")
+
+    # Launch
     return webdriver.Chrome(options=opts)
+
+def _make_edge_driver(browser_binary: str | None, ext_path: str | None,
+                      profile_dir: Path, privacy_flags, privacy_prefs):
+    if EdgeOptions is None:
+        raise RuntimeError("Edge driver support not available in this environment.")
+    opts = EdgeOptions()
+    if browser_binary:
+        # EdgeOptions has 'binary_location' too
+        try:
+            opts.binary_location = browser_binary
+        except Exception:
+            pass
+
+    # Edge also supports user-data-dir
+    opts.add_argument(f"--user-data-dir={str(profile_dir)}")
+    for f in privacy_flags or []:
+        opts.add_argument(f)
+        if f == "--inprivate":
+            print("[warn] InPrivate disables extensions unless allowed; extension UI may not appear.")
+    if privacy_prefs:
+        # Edge honors Chrome-style prefs as it's Chromium-based
+        opts.add_experimental_option("prefs", privacy_prefs)
+
+    if ext_path:
+        p = Path(ext_path)
+        if p.exists():
+            if _ext_is_crx(ext_path):
+                # Edge supports add_extension for packaged extensions
+                try:
+                    opts.add_extension(ext_path)
+                except Exception:
+                    # Some Edge builds only accept unpacked via --load-extension
+                    if p.is_dir():
+                        opts.add_argument(f"--load-extension={ext_path}")
+                    else:
+                        print(f"[warn] Could not add CRX directly for Edge; "
+                              f"try using an unpacked folder instead: {ext_path}")
+            elif p.is_dir():
+                opts.add_argument(f"--load-extension={ext_path}")
+        else:
+            print(f"[warn] Extension path does not exist: {ext_path}")
+
+    return webdriver.Edge(options=opts)
+
+def _make_driver(job_browser: str, browser_binary: str | None, ext_path: str | None,
+                 profile_dir: Path, privacy_flags, privacy_prefs):
+    b = (job_browser or "").lower()
+    if b == "edge":
+        return _make_edge_driver(browser_binary, ext_path, profile_dir, privacy_flags, privacy_prefs)
+    elif b in ("chrome", "brave", "opera"):
+        # Opera is best-effort; may fail depending on local driver compatibility
+        return _make_chrome_like_driver(b, browser_binary, ext_path, profile_dir, privacy_flags, privacy_prefs)
+    else:
+        # Default to Chrome-like
+        return _make_chrome_like_driver(b, browser_binary, ext_path, profile_dir, privacy_flags, privacy_prefs)
+
+# ---------- main flow ----------
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     ext_ordinal = job.get("extension_ordinal", 0)
     prefix = f"{ext_ordinal}." if ext_ordinal else ""
 
     profile_dir = Path(tempfile.mkdtemp(prefix=f"{job.get('browser','chromium')}_profile_"))
-    driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), profile_dir)
+
+    driver = _make_driver(
+        job.get("browser"),
+        job.get("browser_binary"),
+        job.get("extension_path"),
+        profile_dir,
+        job.get("privacy_flags") or [],
+        job.get("privacy_prefs") or {},
+    )
+
     try:
         # Navigate (retry once if window disappeared)
         url = job["affiliate_link"]
@@ -245,9 +324,18 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 break
             except NoSuchWindowException:
                 if attempt == 1:
-                    try: driver.quit()
-                    except Exception: pass
-                    driver = _make_driver(job.get("browser_binary"), job.get("extension_path"), profile_dir)
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                    driver = _make_driver(
+                        job.get("browser"),
+                        job.get("browser_binary"),
+                        job.get("extension_path"),
+                        profile_dir,
+                        job.get("privacy_flags") or [],
+                        job.get("privacy_prefs") or {},
+                    )
                     continue
                 else:
                     raise
@@ -353,7 +441,9 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         except Exception:
             pass
 
-def goto_comparison_and_write(job, src_workbook, out_workbook,
+# ---------- output ----------
+
+def goto_comparison_and_write(job, src_workbook: Path, out_workbook: Path,
                               driver, browser_ver, domain,
                               before_cookies, after_cookies,
                               new_tabs, prefix,
@@ -372,11 +462,12 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
     wide = {
         "Plugin": job.get("extension_name", ""),
         "Browser": job.get("browser","Chromium"),
+        "Browser Privacy Level": job.get("privacy_name", ""),
         "Browser Version": browser_ver,
         "Website": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
     }
-    # TARGETS first
+    # TARGETS first (union of before/after so wildcards become concrete columns)
     for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
         wide[f"{ck} (Before)"] = val_before(ck)
         wide[f"{ck} (After)"]  = val_after(ck)
@@ -423,14 +514,14 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Merchant": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
         "Coupon Applied?": "",
-        "Extension Popup Seen?": popup_seen,      # NEW
+        "Extension Popup Seen?": popup_seen,
         "New Pages Opened": str(len(new_tabs)),
         "Cookies Added (count)": str(len(added)),
         "Cookies Changed (count)": str(len(changed)),
-        "Redirect URL": redirect_url_final,       # NEW
+        "Redirect URL": redirect_url_final,
         "Refreshed?": "Yes" if refreshed else "No",
-        "New Tab URLs": new_tab_urls,             # NEW
-        "New Tab Titles": new_tab_titles,         # NEW
+        "New Tab URLs": new_tab_urls,
+        "New Tab Titles": new_tab_titles,
         "HAR Path": "",
         "Screenshots": "",
         "Status": "SUCCESS",
@@ -443,7 +534,6 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
     append_clean_data_row(src_workbook, out_workbook, clean_row)
 
     diag_rows = []
-    # record target cookie diffs in Diagnostics
     for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
         b = next((c for c in before_cookies if c["name"] == ck), None)
         a = next((c for c in after_cookies  if c["name"] == ck), None)
