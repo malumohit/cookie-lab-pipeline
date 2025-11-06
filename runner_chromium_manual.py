@@ -1,6 +1,11 @@
 # runner_chromium_manual.py — Chromium via per-extension pre-provisioned profiles
 # Only the key differences vs. your last file are shown: PROFILE_ROOT + _profile_for() + using that profile.
+# --- add near the imports (top of file) ---
+import json
+import os
 
+from selenium.webdriver.chrome.service import Service as ChromeService
+from webdriver_manager.chrome import ChromeDriverManager
 import time, hashlib
 from urllib.parse import urlparse
 from pathlib import Path
@@ -13,7 +18,111 @@ from excel_writer import append_clean_data_row, append_diagnostics, append_cooki
 
 from selenium.webdriver.chrome.service import Service as ChromeService
 from webdriver_manager.chrome import ChromeDriverManager
-import os
+
+def _find_extension_root(ext_path: str) -> str | None:
+    """
+    Return a folder path that contains manifest.json.
+    If ext_path is a folder without manifest.json, search one level down.
+    If ext_path is a .crx, we *suggest* unpacking it manually (Chrome blocks many .crx loads).
+    """
+    if not ext_path:
+        return None
+    p = Path(ext_path)
+    if not p.exists():
+        print(f"[warn] Extension path does not exist: {p}")
+        return None
+
+    # If a folder, check for manifest.json in that folder
+    if p.is_dir():
+        manifest = p / "manifest.json"
+        if manifest.exists():
+            return str(p)
+
+        # Sometimes the real root is one level deeper (e.g., .../Honey 18.2.1/src or .../unpacked)
+        for child in p.iterdir():
+            if child.is_dir() and (child / "manifest.json").exists():
+                print(f"[info] Using nested extension folder: {child}")
+                return str(child)
+
+        print(f"[warn] No manifest.json found under {p}. Make sure this is the UNPACKED extension root.")
+        return None
+
+    # If a .crx file, Chrome frequently blocks loading it via Selenium.
+    if p.suffix.lower() == ".crx":
+        print(f"[warn] CRX detected at {p}. For reliability, unzip it to a folder with manifest.json and "
+              f"point chromium_path there. (Chrome often ignores packaged CRX via automation.)")
+        return None
+
+    print(f"[warn] Extension path is neither a folder-with-manifest nor a .crx: {p}")
+    return None
+
+
+def _make_chrome_like(browser: str,
+                      browser_binary: str | None,
+                      ext_path: str | None,
+                      profile_dir: Path,
+                      privacy_flags,
+                      privacy_prefs,
+                      log_dir: Path):
+    """
+    Create a Chrome/Chromium-like driver that can load unpacked extensions reliably.
+    Key bits:
+      - remove Selenium's default '--disable-extensions' via excludeSwitches
+      - use --load-extension with a *validated* folder that has manifest.json
+    """
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    opts = ChromeOptions()
+
+    if browser_binary:
+        opts.binary_location = browser_binary
+
+    # Fresh profile for this run
+    opts.add_argument(f"--user-data-dir={str(profile_dir)}")
+    opts.add_argument("--disable-backgrounding-occluded-windows")
+    opts.add_argument("--disable-notifications")
+    opts.add_argument("--no-first-run")
+    opts.add_argument("--no-default-browser-check")
+
+    # IMPORTANT: let extensions load (Selenium used to add --disable-extensions)
+    opts.add_experimental_option("excludeSwitches", ["disable-extensions"])
+
+    # Privacy flags/prefs
+    for f in (privacy_flags or []):
+        opts.add_argument(f)
+        if f in ("--incognito", "--inprivate"):
+            print("[warn] Incognito/InPrivate hides extensions unless ‘Allow in incognito’ is enabled.")
+    if privacy_prefs:
+        opts.add_experimental_option("prefs", privacy_prefs)
+
+    # Extension root resolution (must contain manifest.json)
+    ext_dir = _find_extension_root(ext_path) if ext_path else None
+    if ext_dir:
+        print(f"[info] Loading unpacked extension from: {ext_dir}")
+        opts.add_argument(f"--load-extension={ext_dir}")
+    else:
+        print("[info] No valid unpacked extension folder resolved; continuing without --load-extension.")
+
+    # Verbose chromedriver log
+    log_dir.mkdir(parents=True, exist_ok=True)
+    service = ChromeService(ChromeDriverManager().install(), log_path=str(log_dir / "chromedriver.log"))
+
+    return webdriver.Chrome(options=opts, service=service)
+
+
+def _make_driver(job_browser: str,
+                 browser_binary: str | None,
+                 ext_path: str | None,
+                 profile_dir: Path,
+                 privacy_flags,
+                 privacy_prefs):
+    """
+    Route for chrome/brave/opera/edge-all-using-chromedriver (Edge best-effort via chromedriver).
+    """
+    b = (job_browser or "").lower()
+    # Log dir for each run
+    log_dir = Path(profile_dir) / "logs"
+    return _make_chrome_like(b, browser_binary, ext_path, profile_dir, privacy_flags, privacy_prefs, log_dir)
+
 
 # Where your per-extension profiles live (created by the PowerShell loop)
 PROFILE_ROOT = Path(r"C:\cookie-lab\profiles\chromium")
