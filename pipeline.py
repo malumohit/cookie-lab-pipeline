@@ -5,7 +5,8 @@ from pathlib import Path
 import yaml
 
 from runner_firefox_manual import run_one as run_one_firefox
-from runner_chromium_manual import run_one as run_one_chromium
+#from runner_chromium_manual import run_one as run_one_chromium
+from runner_chromium_puppeteer import run_one as run_one_chromium
 
 CHROMIUM_FAMILY = ("chrome", "edge", "brave", "opera")
 
