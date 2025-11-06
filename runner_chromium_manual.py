@@ -11,19 +11,29 @@ from pathlib import Path
 from datetime import datetime
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchWindowException, SessionNotCreatedException
+from selenium.common.exceptions import (
+    NoSuchWindowException,
+    SessionNotCreatedException,
+    WebDriverException,
+)
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.edge.service import Service as EdgeService
 
-
-# Optional fallback to webdriver_manager if Selenium Manager struggles
+# Optional fallback(s) to webdriver_manager if Selenium Manager struggles
+_WDM_CHROME_AVAILABLE = False
+_WDM_EDGE_AVAILABLE = False
 try:
     from selenium.webdriver.chrome.service import Service as ChromeService
     from webdriver_manager.chrome import ChromeDriverManager
-    _WDM_AVAILABLE = True
+    _WDM_CHROME_AVAILABLE = True
 except Exception:
-    _WDM_AVAILABLE = False
+    pass
+try:
+    from webdriver_manager.microsoft import EdgeChromiumDriverManager
+    _WDM_EDGE_AVAILABLE = True
+except Exception:
+    pass
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
 
@@ -117,7 +127,7 @@ def _after_key(name: str)  -> str: return _sanitize_cookie_name(name) + " (After
 def _get_nav_marker(driver):
     try:
         return driver.execute_script(
-            "return (performance.timeOrigin||performance.timing?.navigationStart)||Date.now();"
+            "return performance.timeOrigin || Date.now();"
         )
     except Exception:
         return None
@@ -181,13 +191,16 @@ def _make_driver(browser_binary: str | None, privacy_flags, privacy_prefs, brows
     """Minimal launcher.
        - Chrome/Brave/Opera: ChromeDriver with binary override.
        - Edge: EdgeDriver with EdgeOptions.
+       - Always uses a fresh temp profile dir per run and cleans it up in caller.
     """
     b = (browser_name or "chrome").lower()
 
     if b == "edge":
         opts = EdgeOptions()
+        # fresh temp profile
+        profile_dir = Path(tempfile.mkdtemp(prefix="edge_profile_"))
+        opts.add_argument(f"--user-data-dir={str(profile_dir)}")
         if browser_binary:
-            # EdgeOptions supports binary_location
             try:
                 opts.binary_location = browser_binary
             except Exception:
@@ -205,12 +218,14 @@ def _make_driver(browser_binary: str | None, privacy_flags, privacy_prefs, brows
         # Use Selenium Manager first; if it fails and webdriver_manager is present, fall back
         try:
             driver = webdriver.Edge(options=opts)
+            driver._temp_profile_dir = profile_dir
             return driver
-        except SessionNotCreatedException:
-            if not _WDM_AVAILABLE:
+        except (SessionNotCreatedException, WebDriverException, Exception):
+            if not _WDM_EDGE_AVAILABLE:
                 raise
-            service = EdgeService()  # Selenium Manager will resolve msedgedriver
+            service = EdgeService(EdgeChromiumDriverManager().install())
             driver = webdriver.Edge(options=opts, service=service)
+            driver._temp_profile_dir = profile_dir
             return driver
 
     # Default path: Chrome/Brave/Opera through ChromeDriver
@@ -232,8 +247,8 @@ def _make_driver(browser_binary: str | None, privacy_flags, privacy_prefs, brows
         driver = webdriver.Chrome(options=opts)
         driver._temp_profile_dir = profile_dir
         return driver
-    except SessionNotCreatedException:
-        if not _WDM_AVAILABLE:
+    except (SessionNotCreatedException, WebDriverException, Exception):
+        if not _WDM_CHROME_AVAILABLE:
             raise
         service = ChromeService(ChromeDriverManager().install())
         driver = webdriver.Chrome(options=opts, service=service)
@@ -245,18 +260,18 @@ def _make_driver(browser_binary: str | None, privacy_flags, privacy_prefs, brows
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     """
     Flow:
-      1) Launch Chrome at the link (no extension auto-load).
+      1) Launch browser at the link (no extension auto-load).
       2) You manually load/operate the extension (if needed).
       3) At checkout prompt, capture BEFORE cookies.
       4) You click popup/toolbar, we watch briefly, then capture AFTER cookies.
       5) Write to Excel and exit.
     """
     driver = _make_driver(
-    job.get("browser_binary"),
-    job.get("privacy_flags") or [],
-    job.get("privacy_prefs") or {},
-    job.get("browser") or "chrome",
-)
+        job.get("browser_binary"),
+        job.get("privacy_flags") or [],
+        job.get("privacy_prefs") or {},
+        job.get("browser") or "chrome",
+    )
     temp_profile = getattr(driver, "_temp_profile_dir", None)
 
     try:
@@ -269,12 +284,15 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 break
             except NoSuchWindowException:
                 if attempt == 1:
-                    try: driver.quit()
-                    except Exception: pass
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
                     driver = _make_driver(
                         job.get("browser_binary"),
                         job.get("privacy_flags") or [],
                         job.get("privacy_prefs") or {},
+                        job.get("browser") or "chrome",
                     )
                     temp_profile = getattr(driver, "_temp_profile_dir", None)
                     continue
@@ -282,7 +300,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                     raise
 
         print("\n=== MANUAL NAVIGATION ===")
-        print("Chrome is open at the link. Load/use the extension manually as needed.")
+        print("The browser is open at the link. Load/use the extension manually as needed.")
         print("Browse yourself to the CHECKOUT page.")
         print("When you are at CHECKOUT: type 'y' + Enter to continue (or 's' to skip).")
 
@@ -468,14 +486,12 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver, domain,
     # Diagnostics: record any target cookie changes + new tab info
     diag_rows = []
     for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
-        b = next((c for c in before_cookies if c["name"] == ck), None)
-        a = next((c for c in after_cookies  if c["name"] == ck), None)
-        b_hash = b and b.get("value_hash")
-        a_hash = a and a.get("value_hash")
+        b_hash = before_targets.get(ck, {}).get("hash")
+        a_hash = after_targets.get(ck, {}).get("hash")
         change = "UNCHANGED"
-        if b and not a: change = "REMOVED"
-        elif a and not b: change = "ADDED"
-        elif b and a and b_hash != a_hash: change = "CHANGED"
+        if ck in before_targets and ck not in after_targets: change = "REMOVED"
+        elif ck in after_targets and ck not in before_targets: change = "ADDED"
+        elif (b_hash is not None) and (a_hash is not None) and b_hash != a_hash: change = "CHANGED"
         if change != "UNCHANGED":
             diag_rows.append({
                 "Test ID": clean_row["Test ID"],
