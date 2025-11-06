@@ -1,17 +1,25 @@
-# runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
-# Uses a pre-provisioned Chrome profile (pptr_profile) that already has the extension installed.
-# Keeps: redirect/refresh watch, dynamic cookie diffs, sanitized headers, "Extension Popup Seen?" recording.
+# runner_chromium_manual.py — Chromium via per-extension pre-provisioned profiles
+# Only the key differences vs. your last file are shown: PROFILE_ROOT + _profile_for() + using that profile.
 
-import time, hashlib, shutil, tempfile
+import time, hashlib
 from urllib.parse import urlparse
 from pathlib import Path
 from datetime import datetime
-
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchWindowException
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
+
+
+# Where your per-extension profiles live (created by the PowerShell loop)
+PROFILE_ROOT = Path(r"C:\cookie-lab\profiles\chromium")
+
+def _sanitize_for_path(name: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in (name or ""))
+
+def _profile_for(ext_name: str) -> Path:
+    return PROFILE_ROOT / _sanitize_for_path(ext_name)
 
 # ======= CONFIG: path to the pre-provisioned profile (created once via chrome --user-data-dir=...) =======
 PROVISIONED_PROFILE = r"C:\cookie-lab\pptr_profile"  # <-- extension must be loaded here once (Option B)
@@ -118,40 +126,39 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
     except Exception: pass
     return redirect_url, refreshed, new_tabs
 
-def _make_driver(job_browser: str, browser_binary: str | None, privacy_flags, privacy_prefs):
+def _make_driver(job_browser: str, browser_binary: str | None, privacy_flags, privacy_prefs, ext_name: str):
     opts = ChromeOptions()
 
-    # Use the pre-provisioned profile (has the extension already)
-    opts.add_argument(f"--user-data-dir={PROVISIONED_PROFILE}")
+    prof_dir = _profile_for(ext_name)
+    if not prof_dir.exists():
+        raise RuntimeError(
+            f"Profile for extension '{ext_name}' not found at:\n  {prof_dir}\n"
+            f"Provision it once by launching Chrome with:\n"
+            f'  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="{prof_dir}"\n'
+            f"Then go to chrome://extensions → Developer mode → Load unpacked → select that extension folder, and close Chrome."
+        )
 
-    # (Optional) isolate each run's tab group a bit with a temp workspace dir
-    # (doesn't clear cookies; just avoids crashing on concurrent runs)
-    tmp = Path(tempfile.mkdtemp(prefix="chromium_sess_"))
-    opts.add_argument(f"--disk-cache-dir={str(tmp)}")
+    # Use the pre-provisioned profile that already has ONLY this extension
+    opts.add_argument(f"--user-data-dir={str(prof_dir)}")
 
-    # If a specific browser binary is provided (Brave/Opera/Edge), point to it
     if browser_binary:
         opts.binary_location = browser_binary
 
-    # Usability flags
+    # Usability
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
     opts.add_argument("--no-first-run")
     opts.add_argument("--no-default-browser-check")
 
-    # Privacy flags
     for f in (privacy_flags or []):
         opts.add_argument(f)
         if f in ("--incognito","--inprivate"):
-            print("[warn] Incognito/InPrivate hides extensions unless 'Allow in incognito' is toggled in chrome://extensions.")
+            print("[warn] Incognito/InPrivate hides extensions unless ‘Allow in incognito’ is enabled in that profile.")
 
-    # Chrome “prefs” still apply to Chromium family
     if privacy_prefs:
         opts.add_experimental_option("prefs", privacy_prefs)
 
-    # IMPORTANT: We do NOT use --load-extension or --disable-extensions-except here.
-    # The extension is already installed in PROVISIONED_PROFILE.
-
+    # IMPORTANT: no --load-extension, no --disable-extensions-except (Chrome ignores those).
     return webdriver.Chrome(options=opts)
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
@@ -160,10 +167,10 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         job.get("browser_binary"),
         job.get("privacy_flags") or [],
         job.get("privacy_prefs") or {},
+        job.get("extension_name") or "",
     )
     try:
         url = job["affiliate_link"]
-        # Retry once if a spontaneous close occurs
         for attempt in (1, 2):
             try:
                 driver.get(url); break
@@ -176,6 +183,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                         job.get("browser_binary"),
                         job.get("privacy_flags") or [],
                         job.get("privacy_prefs") or {},
+                        job.get("extension_name") or "",
                     )
                     continue
                 raise
