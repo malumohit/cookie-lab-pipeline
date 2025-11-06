@@ -11,6 +11,9 @@ from selenium.webdriver.chrome.options import Options as ChromeOptions
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
 
+from selenium.webdriver.chrome.service import Service as ChromeService
+from webdriver_manager.chrome import ChromeDriverManager
+import os
 
 # Where your per-extension profiles live (created by the PowerShell loop)
 PROFILE_ROOT = Path(r"C:\cookie-lab\profiles\chromium")
@@ -126,40 +129,54 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
     except Exception: pass
     return redirect_url, refreshed, new_tabs
 
-def _make_driver(job_browser: str, browser_binary: str | None, privacy_flags, privacy_prefs, ext_name: str):
+def _make_driver(job_browser: str,
+                 browser_binary: str | None,
+                 privacy_flags,
+                 privacy_prefs,
+                 ext_name: str,
+                 ext_path: str | None):
+    """Create Chrome with a per-extension profile. If the profile does not exist,
+    create it and load the unpacked extension for THIS session (no pre-provision needed)."""
     opts = ChromeOptions()
 
-    prof_dir = _profile_for(ext_name)
-    if not prof_dir.exists():
-        raise RuntimeError(
-            f"Profile for extension '{ext_name}' not found at:\n  {prof_dir}\n"
-            f"Provision it once by launching Chrome with:\n"
-            f'  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="{prof_dir}"\n'
-            f"Then go to chrome://extensions → Developer mode → Load unpacked → select that extension folder, and close Chrome."
-        )
-
-    # Use the pre-provisioned profile that already has ONLY this extension
+    # where profile lives
+    profile_root = Path(r"C:\cookie-lab\profiles\chromium")
+    prof_dir = profile_root / _sanitize_for_path(ext_name)
+    prof_dir.mkdir(parents=True, exist_ok=True)
     opts.add_argument(f"--user-data-dir={str(prof_dir)}")
 
     if browser_binary:
         opts.binary_location = browser_binary
 
-    # Usability
+    # usability
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
     opts.add_argument("--no-first-run")
     opts.add_argument("--no-default-browser-check")
 
+    # privacy flags/prefs
     for f in (privacy_flags or []):
         opts.add_argument(f)
         if f in ("--incognito","--inprivate"):
-            print("[warn] Incognito/InPrivate hides extensions unless ‘Allow in incognito’ is enabled in that profile.")
+            print("[warn] Incognito/InPrivate hides extensions unless ‘Allow in incognito’ is enabled for that profile.")
 
     if privacy_prefs:
         opts.add_experimental_option("prefs", privacy_prefs)
 
-    # IMPORTANT: no --load-extension, no --disable-extensions-except (Chrome ignores those).
-    return webdriver.Chrome(options=opts)
+    # If an unpacked extension folder is provided, load it for this session.
+    # (Do NOT use --disable-extensions-except; Chrome ignores it.)
+    if ext_path:
+        p = Path(ext_path)
+        if p.exists() and p.is_dir():
+            print(f"[info] Loading unpacked extension (session): {p}")
+            opts.add_argument(f"--load-extension={str(p)}")
+        elif p.exists() and p.suffix.lower() == ".crx":
+            # unpack is strongly recommended; .crx can be blocked by policy
+            print(f"[warn] CRX detected; prefer unpacked folder for reliability: {p}")
+
+    # Use a managed driver (avoids Selenium Manager hang)
+    service = ChromeService(ChromeDriverManager().install())
+    return webdriver.Chrome(options=opts, service=service)
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     driver = _make_driver(
@@ -168,6 +185,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         job.get("privacy_flags") or [],
         job.get("privacy_prefs") or {},
         job.get("extension_name") or "",
+        job.get("extension_path")
     )
     try:
         url = job["affiliate_link"]
