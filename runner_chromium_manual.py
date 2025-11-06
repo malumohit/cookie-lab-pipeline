@@ -1,83 +1,51 @@
 # runner_chromium_manual.py — manual-browse runner (Chrome/Edge/Brave/Opera)
-# Fixes:
-#  - Remove --disable-extensions-except for Google Chrome (ignored by policy)
-#  - Pin ChromeDriver to the installed Chrome MAJOR version (prevents "session not created")
-#  - Prefer correct architecture on ARM64 via webdriver-manager env hints
-#  - Keep unpacked extension loading with --load-extension
-#  - Keep privacy flags (but skip incognito so the extension UI appears)
-#  - Keep redirect/refresh watch, dynamic cookie diffs, sanitized headers, and "Extension Popup Seen?"
+# Uses a pre-provisioned Chrome profile (pptr_profile) that already has the extension installed.
+# Keeps: redirect/refresh watch, dynamic cookie diffs, sanitized headers, "Extension Popup Seen?" recording.
 
-import os
-import json
-import time
-import platform
-import hashlib
-import tempfile
-import shutil
-import subprocess
+import time, hashlib, shutil, tempfile
 from urllib.parse import urlparse
 from pathlib import Path
 from datetime import datetime
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchWindowException, SessionNotCreatedException
-
+from selenium.common.exceptions import NoSuchWindowException
 from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.chrome.service import Service as ChromeService
-try:
-    from selenium.webdriver.edge.options import Options as EdgeOptions
-    from selenium.webdriver.edge.service import Service as EdgeService
-except Exception:
-    EdgeOptions = None
-    EdgeService = None
-
-# webdriver-manager (no 'path=' arg)
-try:
-    from webdriver_manager.chrome import ChromeDriverManager
-    from webdriver_manager.microsoft import EdgeChromiumDriverManager
-    _WDM_OK = True
-except Exception:
-    _WDM_OK = False
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
 
-# ===== TARGET COOKIES =========================================================
+# ======= CONFIG: path to the pre-provisioned profile (created once via chrome --user-data-dir=...) =======
+PROVISIONED_PROFILE = r"C:\cookie-lab\pptr_profile"  # <-- extension must be loaded here once (Option B)
+
+# === TARGET COOKIES (case-insensitive; '*' = prefix wildcard) ===
 TARGET_ORDER = [
     "NV_MC_LC","NV_MC_FC","NV_ECM_TK_LC",
     "__attentive_utm_param_campaign","__attentive_utm_param_source","__attentive_utm_param_medium",
     "__attentive_utm_param_term","__attentive_utm_param_content",
-
     "campaign","campaign_id","campaign_date","campaign_source","campaign_medium","campaign_name",
     "utm_source","utm_medium","utm_campaign","utm_term","utm_content",
-
     "affid","aff_id","affiliate","affiliate_id","affiliate_source","affsource","aff_source","affname",
     "aff_sub","aff_sub2","aff_sub3","aff_sub4","aff_sub5","subid","sub_id",
-
     "awinaffid","awcid","awcr","aw_referrer","aw_click_id",
     "cjevent","cjData",
     "irclickid","irgwc","irpid","iradid","iradname",
     "sscid","scid",
     "prms","prm_expid","prm_click",
-
     "gclid","gclsrc","dclid","fbclid","msclkid","ttclid","twclid","yclid",
-
     "_ga","_ga_*","_gid","_gat","_gat_*","_gcl_au","_gcl_aw","_gcl_dc",
     "_fbp","_fbc","_uetsid","_uetvid","_tt_enable_cookie","_ttp","_pin_unauth","_rdt_uuid",
-
     "AMCV_","s_cc","s_sq","mbox","mboxEdgeCluster",
-
     "ref","referrer","source","campaignCode","promo","promocode","coupon","coupon_code",
     "session_id","sessionid","sid",
 ]
 _CANON = {n.lower(): n for n in TARGET_ORDER if not n.endswith("*")}
 _PREFIXES = [n[:-1].lower() for n in TARGET_ORDER if n.endswith("*")]
 
-def _is_target_name(n: str|None)->str|None:
-    if not n: return None
-    ln = n.lower()
+def _is_target_name(raw: str) -> str | None:
+    if not raw: return None
+    ln = raw.lower()
     if ln in _CANON: return _CANON[ln]
     for p in _PREFIXES:
-        if ln.startswith(p): return n
+        if ln.startswith(p): return raw
     return None
 
 def _h(v: str) -> str:
@@ -99,22 +67,19 @@ def _cookie_frame_full(c: dict) -> dict:
 def _snapshot_targets(cookies):
     out = {}
     for c in cookies:
-        nm = c.get("name") or ""
-        canon = _is_target_name(nm)
+        canon = _is_target_name(c.get("name") or "")
         if canon:
             val = c.get("value") or ""
             out[canon] = {"value": val, "hash": _h(val)}
     return out
 
-# ----- header sanitizers -----
 def _sanitize_cookie_name(name: str) -> str:
     if name is None: return "Cookie:UNKNOWN"
     safe = name.replace("\r"," ").replace("\n"," ").replace("\t"," ").strip()
     return safe if safe.startswith("Cookie:") else f"Cookie:{safe}"
-def _before_key(name): return _sanitize_cookie_name(name) + " (Before)"
-def _after_key(name):  return _sanitize_cookie_name(name) + " (After)"
+def _before_key(name: str) -> str: return _sanitize_cookie_name(name) + " (Before)"
+def _after_key(name: str)  -> str: return _sanitize_cookie_name(name) + " (After)"
 
-# ----- nav/redirect helpers -----
 def _get_nav_marker(driver):
     try:
         return driver.execute_script("return (performance.timeOrigin||performance.timing?.navigationStart)||Date.now();")
@@ -125,7 +90,7 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
     t0 = time.time()
     seen = set(pre_handles)
     new_tabs, redirect_url, refreshed = [], "", False
-    while (time.time()-t0) < window_sec:
+    while (time.time() - t0) < window_sec:
         try: handles = set(driver.window_handles)
         except Exception: handles = set()
         for h in list(handles - seen):
@@ -138,255 +103,68 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
                 seen.add(h)
         try: driver.switch_to.window(list(pre_handles)[0])
         except Exception: pass
-
         try: curr_url = driver.current_url or ""
         except Exception: curr_url = ""
         nav_ts = _get_nav_marker(driver)
-
         if curr_url and pre_url and curr_url != pre_url and not redirect_url:
             redirect_url = curr_url
         if nav_ts is not None and pre_nav_ts is not None and nav_ts != pre_nav_ts:
             if (not redirect_url) and (curr_url == pre_url):
                 refreshed = True
         time.sleep(0.2)
-
     if not redirect_url and new_tabs:
-        redirect_url = new_tabs[0].get("url","") or ""
+        redirect_url = new_tabs[0].get("url", "") or ""
     try: driver.switch_to.window(list(pre_handles)[0])
     except Exception: pass
     return redirect_url, refreshed, new_tabs
 
-# ===== environment + detection =====
-
-def _maybe_hint_arm64():
-    # Help webdriver-manager choose ARM64 builds when on Windows ARM machines
-    m = platform.machine().lower()
-    if "arm64" in m or "aarch64" in m:
-        os.environ.setdefault("WDM_ARCH", "arm64")
-        os.environ.setdefault("WDM_ARCHITECTURE", "arm64")
-
-def _chrome_version_from_binary(chrome_exe: str|None):
-    """Return (full_version, major) by calling chrome.exe --version."""
-    if not chrome_exe:
-        return None, None
-    try:
-        # CREATE_NO_WINDOW to avoid flashing a console
-        CREATE_NO_WINDOW = 0x08000000
-        out = subprocess.check_output(
-            [chrome_exe, "--version"],
-            stderr=subprocess.STDOUT,
-            creationflags=CREATE_NO_WINDOW
-        ).decode("utf-8", errors="ignore").strip()
-        # "Google Chrome 142.0.7444.61" or "Chromium 122.0..."
-        parts = out.split()
-        ver = parts[-1] if parts else ""
-        major = ver.split(".")[0] if ver else ""
-        if major.isdigit():
-            print(f"[auto] Detected Chrome version: {ver} (major {major})")
-            return ver, major
-    except Exception as e:
-        print(f"[warn] Could not read Chrome --version: {e}")
-    return None, None
-
-def _common_paths_for(browser: str):
-    if browser == "chrome":
-        return [
-            Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-            Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
-            Path(os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")),
-        ]
-    if browser == "brave":
-        return [
-            Path(os.path.expandvars(r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe")),
-            Path(r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"),
-        ]
-    if browser == "opera":
-        return [
-            Path(os.path.expandvars(r"%LOCALAPPDATA%\Programs\Opera\opera.exe")),
-            Path(r"C:\Program Files\Opera\opera.exe"),
-        ]
-    return []
-
-def _auto_find_browser_binary(browser: str) -> str | None:
-    for p in _common_paths_for(browser):
-        try:
-            if p.exists():
-                return str(p)
-        except Exception:
-            pass
-    return None
-
-# ===== options/services =====
-
-def _apply_common_args(opts, profile_dir: Path|None, privacy_flags, privacy_prefs):
-    if profile_dir:
-        opts.add_argument(f"--user-data-dir={str(profile_dir)}")
-    opts.add_argument("--no-first-run")
-    opts.add_argument("--no-default-browser-check")
-    opts.add_argument("--disable-backgrounding-occluded-windows")
-    opts.add_argument("--disable-notifications")
-    opts.add_argument("--remote-allow-origins=*")
-    # Extensions do not show in incognito/private by default; skip those flags
-    for f in (privacy_flags or []):
-        fl = str(f).strip().lower()
-        if fl in ("--incognito","--inprivate"):
-            print("[warn] skipping incognito/private flag so extension UI can show")
-            continue
-        opts.add_argument(f)
-    if privacy_prefs:
-        try: opts.add_experimental_option("prefs", privacy_prefs)
-        except Exception: pass
-    try:
-        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-        opts.add_experimental_option("useAutomationExtension", False)
-    except Exception:
-        pass
-
-def _normalize_unpacked_dir(ext_path: str | None) -> str | None:
-    if not ext_path: return None
-    p = Path(ext_path)
-    if not p.exists():
-        print(f"[warn] Extension path does not exist: {p}")
-        return None
-    if p.is_file():
-        print(f"[warn] '{p}' is a file. Unpack the CRX; point chromium_path to the folder with manifest.json.")
-        return None
-    if not (p / "manifest.json").exists():
-        print(f"[warn] No manifest.json in '{p}'. Not a valid unpacked extension.")
-        return None
-    return p.resolve().as_posix()
-
-def _read_manifest_version(ext_dir: str | None) -> int | None:
-    if not ext_dir: return None
-    try:
-        data = json.loads(Path(ext_dir, "manifest.json").read_text(encoding="utf-8"))
-        return int(data.get("manifest_version", 0))
-    except Exception:
-        return None
-
-def _chrome_service_with_wdm(log_dir: Path, chrome_binary: str|None) -> ChromeService:
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"chromedriver_{int(time.time())}.log"
-    print(f"[driver-log] {log_path.as_posix()}")
-    if not _WDM_OK:
-        # Selenium Manager will try; but it hung earlier in your env — we keep wdm path when available
-        return ChromeService(log_output=str(log_path))
-
-    _maybe_hint_arm64()
-    _, major = _chrome_version_from_binary(chrome_binary)
-    try:
-        if major:
-            print(f"[wdm] Pinning ChromeDriver to major {major}")
-            driver_path = ChromeDriverManager(version=major).install()
-        else:
-            driver_path = ChromeDriverManager().install()
-        print(f"[wdm] ChromeDriver: {driver_path}")
-        return ChromeService(executable_path=driver_path, log_output=str(log_path))
-    except Exception as e:
-        print(f"[wdm-warn] {e}; falling back to Selenium Manager")
-        return ChromeService(log_output=str(log_path))
-
-def _edge_service_with_wdm(log_dir: Path) -> EdgeService:
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"edgedriver_{int(time.time())}.log"
-    print(f"[driver-log] {log_path.as_posix()}")
-    if not (_WDM_OK and EdgeService is not None):
-        return EdgeService(log_output=str(log_path))
-    _maybe_hint_arm64()
-    try:
-        driver_path = EdgeChromiumDriverManager().install()
-        print(f"[wdm] EdgeDriver: {driver_path}")
-        return EdgeService(executable_path=driver_path, log_output=str(log_path))
-    except Exception as e:
-        print(f"[wdm-warn] {e}; falling back to Selenium Manager")
-        return EdgeService(log_output=str(log_path))
-
-# ===== driver makers =====
-
-def _make_chrome_like(browser: str, browser_binary: str|None, ext_dir: str|None,
-                      profile_dir: Path|None, privacy_flags, privacy_prefs, log_dir: Path):
+def _make_driver(job_browser: str, browser_binary: str | None, privacy_flags, privacy_prefs):
     opts = ChromeOptions()
+
+    # Use the pre-provisioned profile (has the extension already)
+    opts.add_argument(f"--user-data-dir={PROVISIONED_PROFILE}")
+
+    # (Optional) isolate each run's tab group a bit with a temp workspace dir
+    # (doesn't clear cookies; just avoids crashing on concurrent runs)
+    tmp = Path(tempfile.mkdtemp(prefix="chromium_sess_"))
+    opts.add_argument(f"--disk-cache-dir={str(tmp)}")
+
+    # If a specific browser binary is provided (Brave/Opera/Edge), point to it
     if browser_binary:
         opts.binary_location = browser_binary
-    else:
-        auto = _auto_find_browser_binary(browser)
-        if auto:
-            print(f"[auto] {browser} binary: {auto}")
-            opts.binary_location = auto
-        else:
-            print(f"[auto] {browser} binary not found; relying on default discovery")
 
-    _apply_common_args(opts, profile_dir, privacy_flags, privacy_prefs)
+    # Usability flags
+    opts.add_argument("--disable-backgrounding-occluded-windows")
+    opts.add_argument("--disable-notifications")
+    opts.add_argument("--no-first-run")
+    opts.add_argument("--no-default-browser-check")
 
-    # === Extension loading ===
-    if ext_dir:
-        mv = _read_manifest_version(ext_dir)
-        print(f"[info] Loading unpacked extension from: {ext_dir} (manifest_version={mv})")
-        # Chrome ignores --disable-extensions-except on stable; so we only use --load-extension
-        opts.add_argument(f"--load-extension={ext_dir}")
-    else:
-        print("[info] Launching without extension.")
+    # Privacy flags
+    for f in (privacy_flags or []):
+        opts.add_argument(f)
+        if f in ("--incognito","--inprivate"):
+            print("[warn] Incognito/InPrivate hides extensions unless 'Allow in incognito' is toggled in chrome://extensions.")
 
-    service = _chrome_service_with_wdm(log_dir, getattr(opts, "binary_location", None))
-    return webdriver.Chrome(options=opts, service=service)
+    # Chrome “prefs” still apply to Chromium family
+    if privacy_prefs:
+        opts.add_experimental_option("prefs", privacy_prefs)
 
-def _make_edge(browser_binary: str|None, ext_dir: str|None,
-               profile_dir: Path|None, privacy_flags, privacy_prefs, log_dir: Path):
-    if EdgeOptions is None or EdgeService is None:
-        raise RuntimeError("Edge WebDriver not available.")
-    opts = EdgeOptions()
-    if browser_binary:
-        try: opts.binary_location = browser_binary
-        except Exception: pass
-    _apply_common_args(opts, profile_dir, privacy_flags, privacy_prefs)
-    if ext_dir:
-        mv = _read_manifest_version(ext_dir)
-        print(f"[info] Loading unpacked extension (Edge) from: {ext_dir} (manifest_version={mv})")
-        opts.add_argument(f"--load-extension={ext_dir}")
-    else:
-        print("[info] Launching Edge without extension.")
-    service = _edge_service_with_wdm(log_dir)
-    return webdriver.Edge(options=opts, service=service)
+    # IMPORTANT: We do NOT use --load-extension or --disable-extensions-except here.
+    # The extension is already installed in PROVISIONED_PROFILE.
 
-def _make_driver(job_browser: str, browser_binary: str|None, ext_path: str|None,
-                 profile_dir: Path|None, privacy_flags, privacy_prefs, log_dir: Path):
-    ext_dir = _normalize_unpacked_dir(ext_path)
-    b = (job_browser or "").lower()
-    if b == "edge":
-        return _make_edge(browser_binary, ext_dir, profile_dir, privacy_flags, privacy_prefs, log_dir)
-    elif b in ("chrome","brave","opera"):
-        return _make_chrome_like(b, browser_binary, ext_dir, profile_dir, privacy_flags, privacy_prefs, log_dir)
-    else:
-        # default to chrome-like
-        return _make_chrome_like(b, browser_binary, ext_dir, profile_dir, privacy_flags, privacy_prefs, log_dir)
-
-# ===== main flow =====
+    return webdriver.Chrome(options=opts)
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
-    ext_ordinal = job.get("extension_ordinal", 0)
-    prefix = f"{ext_ordinal}." if ext_ordinal else ""
-
-    tmp_root = Path(tempfile.mkdtemp(prefix=f"{job.get('browser','chromium')}_profile_"))
-    profile_dir = tmp_root / "user_data"
-    logs_dir = tmp_root / "logs"
-    profile_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        driver = _make_driver(
-            job.get("browser"), job.get("browser_binary"), job.get("extension_path"),
-            profile_dir, job.get("privacy_flags") or [], job.get("privacy_prefs") or {}, logs_dir
-        )
-    except SessionNotCreatedException as e_a:
-        print(f"[tierA-error] {e_a}")
-        # retry without extension but same profile
-        driver = _make_driver(
-            job.get("browser"), job.get("browser_binary"), None,
-            profile_dir, job.get("privacy_flags") or [], job.get("privacy_prefs") or {}, logs_dir
-        )
-
+    driver = _make_driver(
+        job.get("browser"),
+        job.get("browser_binary"),
+        job.get("privacy_flags") or [],
+        job.get("privacy_prefs") or {},
+    )
     try:
         url = job["affiliate_link"]
-        for attempt in (1,2):
+        # Retry once if a spontaneous close occurs
+        for attempt in (1, 2):
             try:
                 driver.get(url); break
             except NoSuchWindowException:
@@ -394,58 +172,60 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                     try: driver.quit()
                     except Exception: pass
                     driver = _make_driver(
-                        job.get("browser"), job.get("browser_binary"), job.get("extension_path"),
-                        profile_dir, job.get("privacy_flags") or [], job.get("privacy_prefs") or {}, logs_dir
+                        job.get("browser"),
+                        job.get("browser_binary"),
+                        job.get("privacy_flags") or [],
+                        job.get("privacy_prefs") or {},
                     )
                     continue
-                else:
-                    raise
+                raise
 
         print("\n=== MANUAL NAVIGATION ===")
-        print("Browser opened. Please navigate to CHECKOUT (log in / guest as needed).")
-        print("When you are at the CHECKOUT page, type 'y' + Enter to continue.")
-        print("Or type 's' + Enter to skip the coupon step for this run.")
+        print("Go to CHECKOUT. Then type 'y' + Enter to continue (or 's' to skip).")
 
-        before_coupon_cookies = None
-        popup_seen = ""
+        before_coupon_cookies, popup_seen = None, ""
         caps = driver.capabilities or {}
         browser_ver = caps.get("browserVersion") or caps.get("version") or ""
-        domain = urlparse(driver.current_url or job.get("affiliate_link","")).netloc
+        domain = urlparse(driver.current_url or url).netloc
 
         while True:
             try: ans = input("Are you at CHECKOUT now? [y]es / [s]kip / [n]o: ").strip().lower()
             except Exception: ans = ""
             if ans in ("y","yes"):
                 before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
-                domain = urlparse(driver.current_url or job.get("affiliate_link","")).netloc
+                domain = urlparse(driver.current_url or url).netloc
+                # Ask about the extension popup
                 while True:
                     try: q = input("Do you see the extension popup right now? [y]es / [n]o: ").strip().lower()
                     except Exception: q = ""
-                    if q in ("y","yes"): popup_seen="Yes"; break
-                    if q in ("n","no"):  popup_seen="No";  break
+                    if q in ("y","yes"): popup_seen = "Yes"; break
+                    if q in ("n","no"):  popup_seen = "No";  break
                     print("Please type 'y' or 'n'.")
                 break
             elif ans in ("s","skip"):
-                try:
-                    before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
+                try: before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 except Exception as e:
                     print(f"Warning: could not read cookies before skip ({e}). Proceeding empty.")
                     before_coupon_cookies = []
-                try: domain = urlparse(driver.current_url or job.get("affiliate_link","")).netloc
-                except Exception: domain = job.get("affiliate_link","")
+                try: domain = urlparse(driver.current_url or url).netloc
+                except Exception: domain = url
                 print("Skipping coupon step for this run as requested.")
                 after_coupon_cookies = before_coupon_cookies
-                new_tabs = []; redirect_url = ""; refreshed = False; popup_seen = "Skipped"
-                goto_comparison_and_write(job, src_workbook, out_workbook, driver, browser_ver, domain,
-                                          before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
-                                          redirect_url, refreshed, popup_seen)
+                new_tabs, redirect_url, refreshed = [], "", False
+                _write_rows(job, src_workbook, out_workbook, driver, browser_ver, domain,
+                            before_coupon_cookies, after_coupon_cookies, new_tabs,
+                            redirect_url, refreshed, popup_seen or "Skipped")
                 return
             else:
-                print("OK, I'll keep waiting. (Tip: you can press 's' to skip.)")
+                print("OK, still waiting. (Tip: 's' to skip.)")
                 time.sleep(5)
 
         print("\n=== ACTION ===")
-        print("Click the popup (or toolbar icon) to apply/activate, then press ENTER here.")
+        if popup_seen == "Yes":
+            print("Click the popup now to apply/activate.")
+        else:
+            print("Click the extension’s toolbar button to apply/activate.")
+        print("Press ENTER here after you click it.")
         pre_handles = set(driver.window_handles)
         pre_url = driver.current_url or ""
         pre_nav_ts = _get_nav_marker(driver)
@@ -453,35 +233,30 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         except Exception: pass
 
         redirect_url, refreshed, new_tabs = _observe_redirect_refresh_and_tabs(
-            driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec",6.0))
+            driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))
         )
         after_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
 
-        goto_comparison_and_write(job, src_workbook, out_workbook, driver, browser_ver, domain,
-                                  before_coupon_cookies, after_coupon_cookies, new_tabs, prefix,
-                                  redirect_url, refreshed, popup_seen)
+        _write_rows(job, src_workbook, out_workbook, driver, browser_ver, domain,
+                    before_coupon_cookies, after_coupon_cookies, new_tabs,
+                    redirect_url, refreshed, popup_seen)
 
     finally:
         try: driver.quit()
         except Exception: pass
-        try: shutil.rmtree(str(tmp_root), ignore_errors=True)
-        except Exception: pass
 
-# ===== output =====
-def goto_comparison_and_write(job, src_workbook: Path, out_workbook: Path,
-                              driver, browser_ver, domain,
-                              before_cookies, after_cookies,
-                              new_tabs, prefix,
-                              redirect_url_final, refreshed,
-                              popup_seen):
-    new_tab_urls = "; ".join([t.get("url","") for t in new_tabs if t.get("url")])
+def _write_rows(job, src_workbook, out_workbook, driver, browser_ver, domain,
+                before_cookies, after_cookies, new_tabs, redirect_url_final, refreshed, popup_seen):
+    prefix = f"{job.get('extension_ordinal',0)}." if job.get("extension_ordinal") else ""
+
+    new_tab_urls   = "; ".join([t.get("url","")   for t in new_tabs if t.get("url")])
     new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
 
     before_targets = _snapshot_targets(before_cookies)
     after_targets  = _snapshot_targets(after_cookies)
 
-    def val_before(name): return (prefix + (before_targets.get(name,{}).get("value","") or "")) if name in before_targets else ""
-    def val_after(name):  return (prefix + (after_targets.get(name,{}).get("value","") or "")) if name in after_targets else ""
+    def val_before(name): return (prefix + (before_targets.get(name, {}).get("value","") or "")) if name in before_targets else ""
+    def val_after(name):  return (prefix + (after_targets.get(name,  {}).get("value","") or "")) if name in after_targets  else ""
 
     wide = {
         "Plugin": job.get("extension_name",""),
@@ -503,10 +278,12 @@ def goto_comparison_and_write(job, src_workbook: Path, out_workbook: Path,
     for k in amap.keys() - bmap.keys(): changed_names.add(amap[k]["name"])
     for k in bmap.keys() - amap.keys(): changed_names.add(bmap[k]["name"])
     for k in amap.keys() & bmap.keys():
-        if amap[k]["value_hash"] != bmap[k]["value_hash"]: changed_names.add(amap[k]["name"])
+        if amap[k]["value_hash"] != bmap[k]["value_hash"]:
+            changed_names.add(amap[k]["name"])
 
-    for name in sorted(changed_names, key=lambda s: (s or "").lower()):
-        if _is_target_name(name): continue
+    for name in sorted(changed_names, key=lambda x: (x or "").lower()):
+        if _is_target_name(name):  # skip: already shown above
+            continue
         bvals = [c["value"] for c in before_cookies if c["name"] == name]
         avals = [c["value"] for c in after_cookies  if c["name"] == name]
         wide[_before_key(name)] = (prefix + bvals[0]) if bvals else ""
@@ -543,7 +320,7 @@ def goto_comparison_and_write(job, src_workbook: Path, out_workbook: Path,
         "Status": "SUCCESS",
         "Failure Reason": "",
         "Notes": f"CookieComparisonRow=1; Tabs={len(new_tabs)}",
-        "Redirect Window (s)": str(job.get("redirect_window_sec",6.0)),
+        "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),
     }
 
     append_cookie_comparison(out_workbook, wide)
@@ -556,29 +333,39 @@ def goto_comparison_and_write(job, src_workbook: Path, out_workbook: Path,
         b_hash = b and b.get("value_hash")
         a_hash = a and a.get("value_hash")
         change = "UNCHANGED"
-        if b and not a: change="REMOVED"
-        elif a and not b: change="ADDED"
-        elif b and a and b_hash!=a_hash: change="CHANGED"
-        if change!="UNCHANGED":
+        if b and not a: change = "REMOVED"
+        elif a and not b: change = "ADDED"
+        elif b and a and b_hash != a_hash: change = "CHANGED"
+        if change != "UNCHANGED":
             diag_rows.append({
-                "Test ID": clean_row["Test ID"], "Browser": clean_row["Browser"],
+                "Test ID": clean_row["Test ID"],
+                "Browser": clean_row["Browser"],
                 "Browser Version": clean_row["Browser Version"],
-                "Extension": clean_row["Extension"], "Extension Version": clean_row["Extension Version"],
-                "Merchant": domain, "Affiliate Link": job.get("affiliate_link",""),
-                "Cookie Name": ck, "Change": change,
-                "Before Hash": b_hash or "", "After Hash": a_hash or "",
+                "Extension": clean_row["Extension"],
+                "Extension Version": clean_row["Extension Version"],
+                "Merchant": domain,
+                "Affiliate Link": job.get("affiliate_link",""),
+                "Cookie Name": ck,
+                "Change": change,
+                "Before Hash": b_hash or "",
+                "After Hash": a_hash or "",
                 "Observed At": ts
             })
     for tab in new_tabs:
         diag_rows.append({
-            "Test ID": clean_row["Test ID"], "Browser": clean_row["Browser"],
+            "Test ID": clean_row["Test ID"],
+            "Browser": clean_row["Browser"],
             "Browser Version": clean_row["Browser Version"],
-            "Extension": clean_row["Extension"], "Extension Version": clean_row["Extension Version"],
-            "Merchant": domain, "Affiliate Link": job.get("affiliate_link",""),
-            "Cookie Name": "(new_tab)", "Change": tab.get("title",""),
-            "Before Hash": "", "After Hash": tab.get("url",""),
+            "Extension": clean_row["Extension"],
+            "Extension Version": clean_row["Extension Version"],
+            "Merchant": domain,
+            "Affiliate Link": job.get("affiliate_link",""),
+            "Cookie Name": "(new_tab)",
+            "Change": tab.get("title",""),
+            "Before Hash": "",
+            "After Hash": tab.get("url",""),
             "Observed At": ts
         })
     append_diagnostics(out_workbook, diag_rows)
 
-    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (manual Chromium).")
+    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (Chromium via pre-provisioned profile).")
