@@ -46,82 +46,82 @@ extensions:
   - name: Avast Safeprice
     version: "23.1.1694"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\avast_safeprice-23.1.1694.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Avast SafePrice 24.15.0.766.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Avast SafePrice 24.15.0.766"
 
   - name: Befrugal
     version: "2025.6.235.0"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\befrugal_automatic_coupons-2025.6.235.0.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\BeFrugal 2025.6.236.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\BeFrugal 2025.6.236.0"
 
   - name: Couponbirds
     version: "4.4.5"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\couponbirds_smartcoupon_finder-4.4.5.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Couponbirds 4.4.8.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Couponbirds 4.4.8"
 
   - name: Couponcabin
     version: "3.5.1.0"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\couponcabin-3.5.1.0.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\CouponCabin Sidekick 3.5.1.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\CouponCabin Sidekick 3.5.1.0"
 
   - name: Hoopla
     version: "1.0.34"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\hoopla-1.0.34.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Hoopla 1.0.35.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Hoopla 1.0.35"
 
   - name: Joko
     version: "2.1.85"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\joko-2.1.85.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Joko 2.1.88.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Joko 2.1.88"
 
   - name: Karma Shopping
     version: "10.71.2"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\karma_shopping_assistance-10.71.2.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Karma 10.79.1.21744.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Karma 10.79.1.21744"
 
   - name: Lovedeals
     version: "2.6.5"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\lovedeals_ai-2.6.5.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\LoveDeals 2.6.5.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\LoveDeals 2.6.5"
 
   - name: Mino
     version: "4.30.1"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\mino_automatic_coupons-4.30.1.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Mino 4.32.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Mino 4.32.0"
 
   - name: Moolah
     version: "1.6.6"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\moolah_automatic_coupon-1.6.6.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Moolah 2.5.1.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Moolah 2.5.1"
 
   - name: Picodi
     version: "1.0.23"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\picodi_com_cashback-1.0.23.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Picodi.com 7.5.12.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Picodi.com 7.5.12"
 
   - name: Priceblink
     version: "8.66"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\priceblink_price_comp_coupons-8.66.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\PriceBlink Coupons 9.9.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\PriceBlink Coupons 9.9"
 
   - name: Refermate
     version: "2.0.10"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\refermate_anywhere-2.0.10.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Refermate 2.0.12.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Refermate 2.0.12"
 
   - name: Retailmenot
     version: "4.15.0"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\retailmenot-4.15.0.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\RetailMeNot 4.18.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\RetailMeNot 4.18.0"
 
   - name: Simplycodes
     version: "2.5.3"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\simplycodes-2.5.3.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\SimplyCodes 2.5.3.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\SimplyCodes 2.5.3"
 
   - name: Topcashback
     version: "7.0.2.0"
     firefox_path: "C:\\cookie-lab\\extensions\\firefox\\topcashback_cashback_coupons-7.0.2.0.xpi"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\TopCashback 7.1.0.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\TopCashback 7.1.0.0"
 
   # - name: Wikibuy
   #   version: "0.1.1219"
@@ -133,71 +133,67 @@ extensions:
 
   - name: Coupert
     version: "6.15.59"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Coupert 6.15.59.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Coupert 6.15.59"
 
   - name: Cently
     version: "7.31.0"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Cently by Coupon Follow 7.31.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Cently by Coupon Follow 7.31.0"
 
   - name: FatCoupon
     version: "1.0.25"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\FatCoupon Cashback 1.0.25.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\FatCoupon Cashback 1.0.25"
 
   - name: Norton Coupons
     version: "7.31.0.766"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Norton 7.31.0.766.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Norton 7.31.0.766"
 
   - name: CNET Shopping
     version: "14.22"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\CNET Shopping 14.22.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\CNET Shopping 14.22"
 
   - name: Avira Safe Shopping
     version: "7.31.0.766"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Avira Safe Shopping 7.31.0.766.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Avira Safe Shopping 7.31.0.766"
 
   - name: Kindred Shop 'n Save
     version: "7.0.0"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Kindred Shop 'n Save 7.0.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Kindred Shop 'n Save 7.0.0"
 
   - name: Student Beans
     version: "3.3.1"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Student Beans 3.3.1.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Student Beans 3.3.1"
 
   - name: Capital One
     version: "0.1.1318"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Capital One 0.1.1318.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Capital One 0.1.1318"
 
   - name: Dontpayfull
     version: "2.1.16"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Dontpayfull 2.1.16.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Dontpayfull 2.1.16"
 
   - name: Newegg Coupon Finder
     version: "1.0.3"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Newegg Coupon Finder 1.0.3.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Newegg Coupon Finder 1.0.3"
 
   - name: Pie Shopping
     version: "1.29.1"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Pie Shopping 1.29.1.crx"
-
-  - name: Total Coupon
-    version: "1.29.1"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Pie Shopping 1.29.1.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Pie Shopping 1.29.1"
 
   - name: Askmeoffer
     version: "1.1.55"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Askmeoffers 1.1.55.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Askmeoffers 1.1.55"
 
   - name: Shop Mail
     version: "1.3.28"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Shopmail 1.3.28.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Shopmail 1.3.28"
 
   - name: Shop TODAY
     version: "1.4.6"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Shop TODAY Savings 1.4.6.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Shop TODAY Savings 1.4.6"
 
   - name: Chrome Coupon Finder
     version: "1.0.0"
-    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Chrome Coupon Finder 1.0.0.crx"
+    chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Chrome Coupon Finder 1.0.0"
 
 links:
   - "https://www.bestbuy.com/product/apple-macbook-air-13-inch-laptop-apple-m2-chip-built-for-apple-intelligence-16gb-memory-256gb-ssd-midnight/JJGCQ8WQR5?irgwc=1&irclickid=wWJUUb3uDxycWglVIjx%3AdVeJUkp0qsxlRwq4z40&ref=388&loc=395630&irmpname=9to5Toys.com"
