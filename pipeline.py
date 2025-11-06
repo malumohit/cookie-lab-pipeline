@@ -21,7 +21,7 @@ def resolve_extension_path(ext: dict, browser_name: str) -> str | None:
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Cookie-test pipeline with resume + privacy levels + incognito")
+    p = argparse.ArgumentParser(description="Cookie-test pipeline with resume + privacy levels")
     p.add_argument("--matrix", default=r"C:\cookie-lab\matrix.yaml")
     p.add_argument("--start-browser", default=None)
     p.add_argument("--start-extension", default=None)
@@ -44,10 +44,6 @@ def load_matrix(path: str) -> dict:
             e["name"] = str(e["name"])
         if "version" in e and e["version"] is not None:
             e["version"] = str(e["version"])
-        # Normalize newly added optional keys
-        e["run_in_incognito"] = bool(e.get("run_in_incognito", False))
-        if e.get("chromium_extension_id") is not None:
-            e["chromium_extension_id"] = str(e["chromium_extension_id"])
     for b in cfg.get("browsers", []):
         if "name" in b and b["name"] is not None:
             b["name"] = str(b["name"])
@@ -77,8 +73,8 @@ def _privacy_iter(cfg: dict, bname: str, requested: str | None):
     if bname.lower() == "firefox":
         levels = pl.get("firefox", [{"name": "default", "prefs": {}}])
     else:
-        # prefer brand-specific section if present, else 'chromium'
         levels = pl.get(bname.lower(), pl.get("chromium", [{"name": "default", "flags": []}]))
+
     if requested:
         return [lvl for lvl in levels if str(lvl.get("name", "")).lower() == requested.lower()]
     return levels
@@ -188,30 +184,26 @@ def run_pipeline(
                         "extension_name": ext_name,
                         "extension_version": ext_ver,
                         "extension_path": ext_path,
-                        "chromium_extension_id": ext.get("chromium_extension_id"),  # NEW
                         "affiliate_link": link,
                         "extension_ordinal": ei + 1,
                         "redirect_window_sec": float(redirect_window),
                         "privacy_name": curr_privacy_name,
                         "privacy_prefs": privacy_prefs,
                         "privacy_flags": privacy_flags,
-                        "run_in_incognito": bool(ext.get("run_in_incognito", False)),  # NEW
+                        # NOTE: no 'run_in_incognito' here; default is normal mode.
                     }
 
                     print(f"\n=== RUN {job_id} ===")
                     try:
                         runner(job, master, output)
                     except Exception as e:
-                        # Log and continue
                         print(f"!! ERROR in {job_id}: {e.__class__.__name__}: {e}")
                     time.sleep(1.5)
 
-                # if only this extension was requested, stop after finishing it
                 if only_extension and ext_name.lower() == only_extension.lower():
                     print(f"Only-extension '{only_extension}' completed. Exiting.")
                     return
 
-            # reset start pointers after first privacy level for this browser
             e_start_idx = 0
             l_start_idx = 0
 
