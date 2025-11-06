@@ -1,7 +1,7 @@
-# runner_firefox_manual.py — manual-browse runner (Firefox, Private by default)
-# Redirect/refresh watch, dynamic cookie diffs, sanitized headers,
-# "Extension Popup Seen?" recorded, and expanded target cookies with wildcard support.
-# Runs Firefox in Private Browsing and allows extensions in Private by default.
+# runner_firefox_manual.py — manual-browse runner (Firefox)
+# DEFAULT: normal window. If privacy prefs set browser.privatebrowsing.autostart=true, runs Private.
+# Redirect/refresh watch, dynamic cookie diffs, sanitized headers, popup seen, wildcard targets.
+
 import time, hashlib
 from urllib.parse import urlparse
 from pathlib import Path
@@ -139,20 +139,14 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     """
-    Manual flow (Firefox/Private):
-      1) Launch Firefox in Private mode, allow extensions in Private, and install the XPI temporarily.
-      2) YOU browse to checkout.
-      3) Snapshot BEFORE cookies at checkout; record popup visibility.
-      4) Click popup/icon, watch for redirects/refresh/new tabs, snapshot AFTER cookies and write.
+    DEFAULT: normal window.
+    If matrix privacy prefs set Private, Firefox will run in Private and (if specified)
+    allow extensions in Private.
     """
     opts = Options()
-    # Force Private + allow extensions in Private
-    opts.set_preference("browser.privatebrowsing.autostart", True)
-    opts.set_preference("extensions.allowPrivateBrowsingByDefault", True)
 
     # Apply any privacy prefs from matrix.yaml privacy_levels.firefox[*].prefs
     for k, v in (job.get("privacy_prefs") or {}).items():
-        # yaml may load as booleans/ints/strings already—set directly
         opts.set_preference(str(k), v)
 
     driver = webdriver.Firefox(options=opts)
@@ -160,11 +154,10 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         # Install extension temporarily
         driver.install_addon(job["extension_path"], temporary=True)
 
-        # Open the link; YOU take it from here to checkout
         driver.get(job["affiliate_link"])
 
         print("\n=== MANUAL NAVIGATION ===")
-        print("Firefox (Private) opened. Please navigate to CHECKOUT (log in / guest as needed).")
+        print("Firefox opened. Please navigate to CHECKOUT (log in / guest as needed).")
         print("When you are at the CHECKOUT page, type 'y' + Enter to continue.")
         print("Or type 's' + Enter to skip the coupon step for this run.")
 
@@ -221,7 +214,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 return
 
             else:
-                print("OK, I'll keep waiting. (Tip: you can press 's' to skip.)")
+                print("OK, still waiting. (Tip: you can press 's' to skip.)")
                 time.sleep(5)
 
         print("\n=== ACTION ===")
@@ -301,7 +294,7 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
             changed_names.add(amap[k]["name"])
 
     for name in sorted(changed_names, key=lambda x: (x or "").lower()):
-        if _is_target_name(name):   # skip targets (already present)
+        if _is_target_name(name):
             continue
         bvals = [c["value"] for c in before_cookies if c["name"] == name]
         avals = [c["value"] for c in after_cookies  if c["name"] == name]
@@ -385,4 +378,4 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         })
     append_diagnostics(out_workbook, diag_rows)
 
-    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (Firefox Private).")
+    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (Firefox).")
