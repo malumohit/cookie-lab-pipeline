@@ -13,6 +13,9 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchWindowException, SessionNotCreatedException
 from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.edge.service import Service as EdgeService
+
 
 # Optional fallback to webdriver_manager if Selenium Manager struggles
 try:
@@ -174,28 +177,57 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
 
 # ===== Driver =====
 
-def _make_driver(browser_binary: str | None, privacy_flags, privacy_prefs):
-    """Minimal Chrome launcher. No extensions. Fresh temp profile each run."""
-    opts = ChromeOptions()
-    profile_dir = Path(tempfile.mkdtemp(prefix="chrome_profile_"))
-    opts.add_argument(f"--user-data-dir={str(profile_dir)}")
+def _make_driver(browser_binary: str | None, privacy_flags, privacy_prefs, browser_name: str = "chrome"):
+    """Minimal launcher.
+       - Chrome/Brave/Opera: ChromeDriver with binary override.
+       - Edge: EdgeDriver with EdgeOptions.
+    """
+    b = (browser_name or "chrome").lower()
 
+    if b == "edge":
+        opts = EdgeOptions()
+        if browser_binary:
+            # EdgeOptions supports binary_location
+            try:
+                opts.binary_location = browser_binary
+            except Exception:
+                pass
+        # QoL + privacy
+        opts.add_argument("--disable-backgrounding-occluded-windows")
+        opts.add_argument("--disable-notifications")
+        opts.add_argument("--no-first-run")
+        opts.add_argument("--no-default-browser-check")
+        for f in (privacy_flags or []):
+            opts.add_argument(f)
+        if privacy_prefs:
+            opts.add_experimental_option("prefs", privacy_prefs)
+
+        # Use Selenium Manager first; if it fails and webdriver_manager is present, fall back
+        try:
+            driver = webdriver.Edge(options=opts)
+            return driver
+        except SessionNotCreatedException:
+            if not _WDM_AVAILABLE:
+                raise
+            service = EdgeService()  # Selenium Manager will resolve msedgedriver
+            driver = webdriver.Edge(options=opts, service=service)
+            return driver
+
+    # Default path: Chrome/Brave/Opera through ChromeDriver
+    opts = ChromeOptions()
+    profile_dir = Path(tempfile.mkdtemp(prefix=f"{b}_profile_"))
+    opts.add_argument(f"--user-data-dir={str(profile_dir)}")
     if browser_binary:
         opts.binary_location = browser_binary
-
-    # QoL
     opts.add_argument("--disable-backgrounding-occluded-windows")
     opts.add_argument("--disable-notifications")
     opts.add_argument("--no-first-run")
     opts.add_argument("--no-default-browser-check")
-
     for f in (privacy_flags or []):
         opts.add_argument(f)
-
     if privacy_prefs:
         opts.add_experimental_option("prefs", privacy_prefs)
 
-    # Try native Selenium Manager first, fallback to webdriver_manager if needed
     try:
         driver = webdriver.Chrome(options=opts)
         driver._temp_profile_dir = profile_dir
@@ -220,10 +252,11 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
       5) Write to Excel and exit.
     """
     driver = _make_driver(
-        job.get("browser_binary"),
-        job.get("privacy_flags") or [],
-        job.get("privacy_prefs") or {},
-    )
+    job.get("browser_binary"),
+    job.get("privacy_flags") or [],
+    job.get("privacy_prefs") or {},
+    job.get("browser") or "chrome",
+)
     temp_profile = getattr(driver, "_temp_profile_dir", None)
 
     try:
