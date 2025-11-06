@@ -6,7 +6,7 @@ import yaml
 
 from runner_firefox_manual import run_one as run_one_firefox
 from runner_chromium_manual import run_one as run_one_chromium
-#from runner_chromium_puppeteer import run_one as run_one_chromium
+# from runner_chromium_puppeteer import run_one as run_one_chromium
 
 CHROMIUM_FAMILY = ("chrome", "edge", "brave", "opera")
 
@@ -21,14 +21,14 @@ def resolve_extension_path(ext: dict, browser_name: str) -> str | None:
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Cookie-test pipeline with resume + privacy levels")
+    p = argparse.ArgumentParser(description="Cookie-test pipeline with resume + privacy levels + incognito")
     p.add_argument("--matrix", default=r"C:\cookie-lab\matrix.yaml")
     p.add_argument("--start-browser", default=None)
     p.add_argument("--start-extension", default=None)
     p.add_argument("--start-link", type=int, default=1)
     p.add_argument("--only-extension", default=None)
     p.add_argument("--redirect-window", type=float, default=6.0)
-    # NEW: choose a privacy level defined in matrix.yaml -> privacy_levels
+    # Choose a privacy level defined in matrix.yaml -> privacy_levels
     p.add_argument(
         "--privacy",
         default=None,
@@ -44,6 +44,10 @@ def load_matrix(path: str) -> dict:
             e["name"] = str(e["name"])
         if "version" in e and e["version"] is not None:
             e["version"] = str(e["version"])
+        # Normalize newly added optional keys
+        e["run_in_incognito"] = bool(e.get("run_in_incognito", False))
+        if e.get("chromium_extension_id") is not None:
+            e["chromium_extension_id"] = str(e["chromium_extension_id"])
     for b in cfg.get("browsers", []):
         if "name" in b and b["name"] is not None:
             b["name"] = str(b["name"])
@@ -75,7 +79,6 @@ def _privacy_iter(cfg: dict, bname: str, requested: str | None):
     else:
         # prefer brand-specific section if present, else 'chromium'
         levels = pl.get(bname.lower(), pl.get("chromium", [{"name": "default", "flags": []}]))
-
     if requested:
         return [lvl for lvl in levels if str(lvl.get("name", "")).lower() == requested.lower()]
     return levels
@@ -185,12 +188,14 @@ def run_pipeline(
                         "extension_name": ext_name,
                         "extension_version": ext_ver,
                         "extension_path": ext_path,
+                        "chromium_extension_id": ext.get("chromium_extension_id"),  # NEW
                         "affiliate_link": link,
                         "extension_ordinal": ei + 1,
                         "redirect_window_sec": float(redirect_window),
                         "privacy_name": curr_privacy_name,
                         "privacy_prefs": privacy_prefs,
                         "privacy_flags": privacy_flags,
+                        "run_in_incognito": bool(ext.get("run_in_incognito", False)),  # NEW
                     }
 
                     print(f"\n=== RUN {job_id} ===")
