@@ -291,10 +291,11 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     driver = _make_driver(
         job.get("browser"),
         job.get("browser_binary"),
+        job.get("extension_path"),
+        profile_dir,
         job.get("privacy_flags") or [],
         job.get("privacy_prefs") or {},
         job.get("extension_name") or "",
-        job.get("extension_path")
     )
     try:
         url = job["affiliate_link"]
