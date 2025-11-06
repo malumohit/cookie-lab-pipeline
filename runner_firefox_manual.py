@@ -1,9 +1,9 @@
-# runner_firefox_manual.py — manual-browse runner (Firefox)
-# redirect+refresh watch, dynamic cookie diffs, sanitized headers,
-# "Extension Popup Seen?" recorded, and EXPANDED, case-insensitive target cookies with wildcard support.
-
+# runner_firefox_manual.py — manual-browse runner (Firefox, Private by default)
+# Redirect/refresh watch, dynamic cookie diffs, sanitized headers,
+# "Extension Popup Seen?" recorded, and expanded target cookies with wildcard support.
+# Runs Firefox in Private Browsing and allows extensions in Private by default.
 import time, hashlib
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 from pathlib import Path
 from datetime import datetime
 
@@ -16,90 +16,32 @@ from excel_writer import (
     append_cookie_comparison,
 )
 
-# === TARGET COOKIES (broad superset, case-insensitive, simple '*' wildcards supported) ===
+# === TARGET COOKIES (case-insensitive, simple '*' wildcards supported) ===
 TARGET_ORDER = [
-    # Newegg / Attentive you already had
-    "NV_MC_LC",
-    "NV_MC_FC",
-    "NV_ECM_TK_LC",
-    "__attentive_utm_param_campaign",
-    "__attentive_utm_param_source",
-    "__attentive_utm_param_medium",
-    "__attentive_utm_param_term",
-    "__attentive_utm_param_content",
-
-    # Campaign keys you asked to always track
-    "campaign",
-    "campaign_id",
-    "campaign_date",
-    "campaign_source",
-    "campaign_medium",
-    "campaign_name",
-
-    # UTM keys (some sites mirror these into cookies)
-    "utm_source",
-    "utm_medium",
-    "utm_campaign",
-    "utm_term",
-    "utm_content",
-
-    # Generic affiliate keys
-    "affid", "aff_id", "affiliate", "affiliate_id", "affiliate_source",
-    "affsource", "aff_source", "affname",
-    "aff_sub", "aff_sub2", "aff_sub3", "aff_sub4", "aff_sub5",
-    "subid", "sub_id",
-
-    # Awin
-    "awinaffid", "awcid", "awcr", "aw_referrer", "aw_click_id",
-
-    # CJ
-    "cjevent", "cjData",
-
-    # Impact
-    "irclickid", "irgwc", "irpid", "iradid", "iradname",
-
-    # ShareASale
-    "sscid", "scid",
-
-    # Partnerize
-    "prms", "prm_expid", "prm_click",
-
-    # Ad platform click IDs
-    "gclid", "gclsrc", "dclid", "fbclid", "msclkid", "ttclid", "twclid", "yclid",
-
-    # Google Analytics (wildcards for GA4 container names)
-    "_ga", "_ga_*", "_gid", "_gat", "_gat_*",
-    "_gcl_au", "_gcl_aw", "_gcl_dc",
-
-    # Meta/Facebook
-    "_fbp", "_fbc",
-
-    # Microsoft Ads
-    "_uetsid", "_uetvid",
-
-    # TikTok
-    "_tt_enable_cookie", "_ttp",
-
-    # Pinterest / Reddit
-    "_pin_unauth", "_rdt_uuid",
-
-    # Adobe Analytics / Target (common subset)
-    "AMCV_", "s_cc", "s_sq", "mbox", "mboxEdgeCluster",
-
-    # Other frequent marketing keys
-    "ref", "referrer", "source", "campaignCode",
-    "promo", "promocode", "coupon", "coupon_code",
-
-    # Session-like keys that often change around checkout/coupons
-    "session_id", "sessionid", "sid",
+    "NV_MC_LC","NV_MC_FC","NV_ECM_TK_LC",
+    "__attentive_utm_param_campaign","__attentive_utm_param_source","__attentive_utm_param_medium",
+    "__attentive_utm_param_term","__attentive_utm_param_content",
+    "campaign","campaign_id","campaign_date","campaign_source","campaign_medium","campaign_name",
+    "utm_source","utm_medium","utm_campaign","utm_term","utm_content",
+    "affid","aff_id","affiliate","affiliate_id","affiliate_source","affsource","aff_source","affname",
+    "aff_sub","aff_sub2","aff_sub3","aff_sub4","aff_sub5","subid","sub_id",
+    "awinaffid","awcid","awcr","aw_referrer","aw_click_id",
+    "cjevent","cjData",
+    "irclickid","irgwc","irpid","iradid","iradname",
+    "sscid","scid",
+    "prms","prm_expid","prm_click",
+    "gclid","gclsrc","dclid","fbclid","msclkid","ttclid","twclid","yclid",
+    "_ga","_ga_*","_gid","_gat","_gat_*","_gcl_au","_gcl_aw","_gcl_dc",
+    "_fbp","_fbc","_uetsid","_uetvid","_tt_enable_cookie","_ttp","_pin_unauth","_rdt_uuid",
+    "AMCV_","s_cc","s_sq","mbox","mboxEdgeCluster",
+    "ref","referrer","source","campaignCode","promo","promocode","coupon","coupon_code",
+    "session_id","sessionid","sid",
 ]
 
-# Build case-insensitive canonical map + wildcard prefixes
 _CANON = {name.lower(): name for name in TARGET_ORDER if not name.endswith("*")}
 _PREFIXES = [name[:-1].lower() for name in TARGET_ORDER if name.endswith("*")]
 
 def _is_target_name(raw_name: str) -> str | None:
-    """Return canonical target name if raw_name matches (case-insensitive; '*' means 'starts with')."""
     if not raw_name:
         return None
     ln = raw_name.lower()
@@ -107,7 +49,7 @@ def _is_target_name(raw_name: str) -> str | None:
         return _CANON[ln]
     for p in _PREFIXES:
         if ln.startswith(p):
-            return raw_name  # keep real cookie name for clarity (e.g., _ga_XXXX)
+            return raw_name
     return None
 
 def _h(v: str) -> str:
@@ -127,9 +69,6 @@ def _cookie_frame_full(c: dict) -> dict:
     }
 
 def _snapshot_targets(cookies):
-    """
-    Return dict: canonical_name -> {'value','hash'} for target cookies (case-insensitive; wildcards expand to actual names).
-    """
     out = {}
     for c in cookies:
         cname = c.get("name") or ""
@@ -139,25 +78,16 @@ def _snapshot_targets(cookies):
             out[canon] = {"value": val, "hash": _h(val)}
     return out
 
-# ---------- header sanitizing helpers ----------
-
 def _sanitize_cookie_name(name: str) -> str:
-    """Turn any cookie name into a safe column prefix (no newlines/tabs)."""
     if name is None:
         return "Cookie:UNKNOWN"
     safe = name.replace("\r", " ").replace("\n", " ").replace("\t", " ").strip()
     return f"Cookie:{safe}" if not safe.startswith("Cookie:") else safe
 
-def _before_key(name: str) -> str:
-    return _sanitize_cookie_name(name) + " (Before)"
-
-def _after_key(name: str) -> str:
-    return _sanitize_cookie_name(name) + " (After)"
-
-# ---------- navigation/redirect helpers ----------
+def _before_key(name: str) -> str: return _sanitize_cookie_name(name) + " (Before)"
+def _after_key(name: str)  -> str: return _sanitize_cookie_name(name) + " (After)"
 
 def _get_nav_marker(driver):
-    """Rough navigation/refresh timestamp marker."""
     try:
         return driver.execute_script(
             "return (performance.timeOrigin||performance.timing?.navigationStart)||Date.now();"
@@ -166,20 +96,12 @@ def _get_nav_marker(driver):
         return None
 
 def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
-    """
-    Watch briefly after the user clicks the extension button to catch:
-      - same-tab redirect (URL change)
-      - same-tab refresh (navigation timestamp change without URL change)
-      - new background tabs (collect title+URL)
-    """
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs = []
     redirect_url = ""
     refreshed = False
-
     while (time.time() - t0) < window_sec:
-        # detect new tabs
         try:
             handles = set(driver.window_handles)
         except Exception:
@@ -192,57 +114,47 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
                 new_tabs.append({"title": "", "url": ""})
             finally:
                 seen_handles.add(h)
-
-        # go back to original if possible
         try:
             driver.switch_to.window(list(pre_handles)[0])
         except Exception:
             pass
-
-        # detect same-tab redirect/refresh
         try:
             curr_url = driver.current_url or ""
         except Exception:
             curr_url = ""
         nav_ts = _get_nav_marker(driver)
-
         if curr_url and pre_url and curr_url != pre_url and not redirect_url:
             redirect_url = curr_url
-
         if nav_ts is not None and pre_nav_ts is not None and nav_ts != pre_nav_ts:
             if (not redirect_url) and (curr_url == pre_url):
                 refreshed = True
-
         time.sleep(0.2)
-
-    # prefer first new-tab URL as "redirect" if no same-tab redirect seen
     if not redirect_url and new_tabs:
         redirect_url = new_tabs[0].get("url", "") or ""
-
-    # return focus
     try:
         driver.switch_to.window(list(pre_handles)[0])
     except Exception:
         pass
-
     return redirect_url, refreshed, new_tabs
-
-# ---------- main runner ----------
 
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     """
-    Manual flow:
-      1) Open the affiliate link and install the extension.
-      2) YOU browse to checkout (login/guest/etc.).
-      3) At checkout, we ask whether you SEE the extension popup (recorded).
-      4) You press ENTER after clicking the popup (or icon) — we sample redirect/refresh for ~6s,
-         take 'after coupon' snapshot, and log new tabs.
+    Manual flow (Firefox/Private):
+      1) Launch Firefox in Private mode, allow extensions in Private, and install the XPI temporarily.
+      2) YOU browse to checkout.
+      3) Snapshot BEFORE cookies at checkout; record popup visibility.
+      4) Click popup/icon, watch for redirects/refresh/new tabs, snapshot AFTER cookies and write.
     """
-    ext_ordinal = job.get("extension_ordinal", 0)
-    prefix = f"{ext_ordinal}." if ext_ordinal else ""
-
     opts = Options()
-    # opts.add_argument("-headless")
+    # Force Private + allow extensions in Private
+    opts.set_preference("browser.privatebrowsing.autostart", True)
+    opts.set_preference("extensions.allowPrivateBrowsingByDefault", True)
+
+    # Apply any privacy prefs from matrix.yaml privacy_levels.firefox[*].prefs
+    for k, v in (job.get("privacy_prefs") or {}).items():
+        # yaml may load as booleans/ints/strings already—set directly
+        opts.set_preference(str(k), v)
+
     driver = webdriver.Firefox(options=opts)
     try:
         # Install extension temporarily
@@ -251,14 +163,13 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         # Open the link; YOU take it from here to checkout
         driver.get(job["affiliate_link"])
 
-        # Prompt loop: confirm when you're at checkout
         print("\n=== MANUAL NAVIGATION ===")
-        print("Browser opened. Please navigate to CHECKOUT (log in / guest as needed).")
+        print("Firefox (Private) opened. Please navigate to CHECKOUT (log in / guest as needed).")
         print("When you are at the CHECKOUT page, type 'y' + Enter to continue.")
         print("Or type 's' + Enter to skip the coupon step for this run.")
 
         before_coupon_cookies = None
-        popup_seen = ""  # record user's answer
+        popup_seen = ""
         browser_ver = driver.capabilities.get("browserVersion", "") or driver.capabilities.get("version", "")
         domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
 
@@ -269,22 +180,17 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 ans = ""
 
             if ans in ("y", "yes"):
-                # Take baseline cookies
                 before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 domain = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
-
-                # Ask if the extension popup is visible now
                 while True:
                     try:
                         q = input("Do you see the extension popup right now? [y]es / [n]o: ").strip().lower()
                     except Exception:
                         q = ""
                     if q in ("y", "yes"):
-                        popup_seen = "Yes"
-                        break
+                        popup_seen = "Yes"; break
                     if q in ("n", "no"):
-                        popup_seen = "No"
-                        break
+                        popup_seen = "No"; break
                     print("Please type 'y' or 'n'.")
                 break
 
@@ -308,7 +214,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                     job, src_workbook, out_workbook,
                     driver, browser_ver, domain,
                     before_coupon_cookies, after_coupon_cookies,
-                    new_tabs, prefix,
+                    new_tabs,
                     redirect_url_final, refreshed,
                     popup_seen
                 )
@@ -318,7 +224,6 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 print("OK, I'll keep waiting. (Tip: you can press 's' to skip.)")
                 time.sleep(5)
 
-        # === Extension popup step ===
         print("\n=== ACTION ===")
         if popup_seen == "Yes":
             print("Great — click the popup now to apply/activate.")
@@ -328,25 +233,21 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         pre_handles = set(driver.window_handles)
         pre_url = driver.current_url or ""
         pre_nav_ts = _get_nav_marker(driver)
-
         try:
             input()
         except Exception:
             pass
 
-        # Observe redirects/refresh/new tabs
         redirect_url, refreshed, new_tabs = _observe_redirect_refresh_and_tabs(
             driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))
         )
-
-        # AFTER snapshot
         after_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
 
         goto_comparison_and_write(
             job, src_workbook, out_workbook,
             driver, browser_ver, domain,
             before_coupon_cookies, after_coupon_cookies,
-            new_tabs, prefix,
+            new_tabs,
             redirect_url, refreshed,
             popup_seen
         )
@@ -357,21 +258,19 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         except Exception:
             pass
 
-# ---------- output building ----------
-
 def goto_comparison_and_write(job, src_workbook, out_workbook,
                               driver, browser_ver, domain,
                               before_cookies, after_cookies,
-                              new_tabs, prefix,
+                              new_tabs,
                               redirect_url_final, refreshed,
                               popup_seen):
-    # Build semicolon-joined lists of any new tabs
     new_tab_urls = "; ".join([t.get("url","") for t in new_tabs if t.get("url")])
     new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
 
-    # Build wide comparison row for TARGETS (raw values) + dynamic for all changed cookies
     before_targets = _snapshot_targets(before_cookies)
     after_targets  = _snapshot_targets(after_cookies)
+
+    prefix = f"{job.get('extension_ordinal',0)}." if job.get("extension_ordinal") else ""
 
     def val_before(name):
         return (prefix + (before_targets.get(name, {}).get("value", "") or "")) if before_targets.get(name) else ""
@@ -386,34 +285,29 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Website": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
     }
-    # TARGETS first (unified set across before/after so columns always appear)
     for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
         wide[f"{ck} (Before)"] = val_before(ck)
         wide[f"{ck} (After)"]  = val_after(ck)
 
-    # Dynamic: add all NON-target cookies that changed (added/removed/value-changed)
     def key(c): return (c["name"], c["domain"], c["path"])
     bmap = {key(c): c for c in before_cookies}
     amap = {key(c): c for c in after_cookies}
 
     changed_names = set()
-    for k in amap.keys() - bmap.keys():
-        changed_names.add(amap[k]["name"])  # added
-    for k in bmap.keys() - amap.keys():
-        changed_names.add(bmap[k]["name"])  # removed
+    for k in amap.keys() - bmap.keys(): changed_names.add(amap[k]["name"])
+    for k in bmap.keys() - amap.keys(): changed_names.add(bmap[k]["name"])
     for k in amap.keys() & bmap.keys():
         if amap[k]["value_hash"] != bmap[k]["value_hash"]:
             changed_names.add(amap[k]["name"])
 
     for name in sorted(changed_names, key=lambda x: (x or "").lower()):
-        if _is_target_name(name):   # skip: it's already a target column
+        if _is_target_name(name):   # skip targets (already present)
             continue
         bvals = [c["value"] for c in before_cookies if c["name"] == name]
         avals = [c["value"] for c in after_cookies  if c["name"] == name]
         wide[_before_key(name)] = (prefix + bvals[0]) if bvals else ""
         wide[_after_key(name)]  = (prefix + avals[0]) if avals else ""
 
-    # Diagnostics/counts
     added = [amap[k] for k in amap.keys() - bmap.keys()]
     changed = []
     for k in amap.keys() & bmap.keys():
@@ -432,14 +326,14 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Merchant": domain,
         "Affiliate Link": job.get("affiliate_link", ""),
         "Coupon Applied?": "",
-        "Extension Popup Seen?": popup_seen,      # NEW
+        "Extension Popup Seen?": popup_seen,
         "New Pages Opened": str(len(new_tabs)),
         "Cookies Added (count)": str(len(added)),
         "Cookies Changed (count)": str(len(changed)),
-        "Redirect URL": redirect_url_final,       # NEW
+        "Redirect URL": redirect_url_final,
         "Refreshed?": "Yes" if refreshed else "No",
-        "New Tab URLs": new_tab_urls,             # NEW
-        "New Tab Titles": new_tab_titles,         # NEW
+        "New Tab URLs": new_tab_urls,
+        "New Tab Titles": new_tab_titles,
         "HAR Path": "",
         "Screenshots": "",
         "Status": "SUCCESS",
@@ -452,23 +346,20 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
     append_clean_data_row(src_workbook, out_workbook, clean_row)
 
     diag_rows = []
-    # record target cookie diffs in Diagnostics
     for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
-        b = next((c for c in before_cookies if c["name"] == ck), None)
-        a = next((c for c in after_cookies  if c["name"] == ck), None)
-        b_hash = b and b.get("value_hash")
-        a_hash = a and a.get("value_hash")
+        b_hash = before_targets.get(ck, {}).get("hash")
+        a_hash = after_targets.get(ck, {}).get("hash")
         change = "UNCHANGED"
-        if b and not a: change = "REMOVED"
-        elif a and not b: change = "ADDED"
-        elif b and a and b_hash != a_hash: change = "CHANGED"
+        if ck in before_targets and ck not in after_targets: change = "REMOVED"
+        elif ck in after_targets and ck not in before_targets: change = "ADDED"
+        elif (b_hash is not None) and (a_hash is not None) and b_hash != a_hash: change = "CHANGED"
         if change != "UNCHANGED":
             diag_rows.append({
                 "Test ID": clean_row["Test ID"],
                 "Browser": clean_row["Browser"],
                 "Browser Version": clean_row["Browser Version"],
-                "Extension": clean_row["Extension"],
-                "Extension Version": clean_row["Extension Version"],
+                "Extension": job.get("extension_name", ""),
+                "Extension Version": job.get("extension_version", ""),
                 "Merchant": domain,
                 "Affiliate Link": job.get("affiliate_link", ""),
                 "Cookie Name": ck,
@@ -482,8 +373,8 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
             "Test ID": clean_row["Test ID"],
             "Browser": clean_row["Browser"],
             "Browser Version": clean_row["Browser Version"],
-            "Extension": clean_row["Extension"],
-            "Extension Version": clean_row["Extension Version"],
+            "Extension": job.get("extension_name", ""),
+            "Extension Version": job.get("extension_version", ""),
             "Merchant": domain,
             "Affiliate Link": job.get("affiliate_link", ""),
             "Cookie Name": "(new_tab)",
@@ -494,4 +385,4 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         })
     append_diagnostics(out_workbook, diag_rows)
 
-    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (manual Firefox; redirect/refresh + dynamic cookies).")
+    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (Firefox Private).")
