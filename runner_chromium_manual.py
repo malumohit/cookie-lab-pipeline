@@ -1,13 +1,13 @@
 # runner_chromium_manual.py — Chromium runner (Chrome/Edge/Brave/Opera)
-# Fresh temp profile per run; redirect/refresh/new-tab watch; writes only the `campaign` cookie
-# for Landing / Before / After. DEFAULT: normal mode. If privacy flags include --incognito/--inprivate,
-# runs Incognito. NOTE: Chromium still loads the extension at launch (Chrome limitation).
-# We mitigate by adding a Landing snapshot (pre-checkout) and recording hosts.
-#
-# COMPAT PATCHES:
-# - Add plain 'Website' in Cookie Field Comparison (uses Before host as canonical).
-# - Restore legacy Clean_Data fields: 'Coupon Applied?', 'Cookies Added (count)', 'Cookies Changed (count)'.
-# - Restore 'Merchant' in Clean_Data (uses Before host as canonical).
+# Implements the requested tweaks and LIMITS capture to a single cookie: 'campaign'.
+# Tweaks:
+#   1) LANDING snapshot immediately after opening the affiliate link.
+#   2) Record Landing/Before/After hosts.
+#   3) Capture only the 'campaign' cookie (Landing / Before / After).
+#   4) Diagnostics logs ONLY when 'campaign' is ADDED/REMOVED/CHANGED.
+#   5) Incognito/strict modes driven by matrix.yaml privacy flags; default is normal mode.
+# Notes:
+#   - Chromium-based browsers must load extensions at startup; we still take a LANDING snapshot first.
 
 import os
 import time
@@ -20,7 +20,8 @@ from urllib.parse import urlparse
 from pathlib import Path
 from datetime import datetime
 
-os.environ["CHROME_LOG_FILE"] = os.devnull  # reduce Chromium logging noise
+# reduce Chromium logging noise
+os.environ["CHROME_LOG_FILE"] = os.devnull
 
 from selenium import webdriver
 from selenium.common.exceptions import (
@@ -33,6 +34,7 @@ from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.edge.service import Service as EdgeService
 
+# Optional fallback(s) to webdriver_manager if Selenium Manager struggles
 _WDM_CHROME_AVAILABLE = False
 _WDM_EDGE_AVAILABLE = False
 try:
@@ -48,17 +50,19 @@ except Exception:
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
 
-# ===== Single-target cookie: 'campaign' (case-insensitive exact name) =====
+# ===== Single-target cookie =====
 TARGET_NAME = "campaign"
 
 def _is_campaign(raw_name: str) -> bool:
+    """Case-insensitive exact match for 'campaign'."""
     return isinstance(raw_name, str) and raw_name.lower() == TARGET_NAME
 
 def _h(v: str) -> str:
+    """Stable short hash for value comparisons in Diagnostics."""
     return hashlib.sha256((v or "").encode("utf-8")).hexdigest()[:16]
 
 def _cookie_frame_full(c: dict) -> dict:
-    # Normalize a Selenium cookie dict for stable comparisons / hashing
+    """Normalize Selenium cookie dict (keeps only stable, comparable fields)."""
     return {
         "name": c.get("name"),
         "value": c.get("value") or "",
@@ -72,17 +76,16 @@ def _cookie_frame_full(c: dict) -> dict:
     }
 
 def _get_campaign_value(cookies):
-    """
-    Return first 'campaign' cookie value if present on the current domain snapshot;
-    else return empty string. (Selenium exposes cookies only for the CURRENT host.)
-    """
+    """Return the first 'campaign' value for the CURRENT host; else empty string."""
     for c in cookies:
         if _is_campaign(c.get("name")):
             return c.get("value") or ""
     return ""
 
-# ===== Nav helpers =====
+# ----- Navigation helpers -----
+
 def _get_nav_marker(driver):
+    """Rough navigation/refresh timestamp marker."""
     try:
         return driver.execute_script("return performance.timeOrigin || Date.now();")
     except Exception:
@@ -90,15 +93,17 @@ def _get_nav_marker(driver):
 
 def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
     """
-    After the user clicks the extension/popup, watch briefly for:
-      - a URL change (redirect)
-      - a refresh (navigation timestamp changed while URL stayed)
-      - newly opened tabs/windows (collect title+URL)
+    After user clicks popup/toolbar, watch briefly for:
+      - same-tab redirect (URL change)
+      - same-tab refresh (nav timestamp changed w/o URL change)
+      - new tabs (collect title+URL)
     """
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs, redirect_url, refreshed = [], "", False
+
     while (time.time() - t0) < window_sec:
+        # detect new tabs
         try:
             handles = set(driver.window_handles)
         except Exception:
@@ -111,31 +116,45 @@ def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles,
                 new_tabs.append({"title": "", "url": ""})
             finally:
                 seen_handles.add(h)
+
+        # return to the original
         try:
             driver.switch_to.window(list(pre_handles)[0])
         except Exception:
             pass
+
+        # detect same-tab redirect/refresh
         try:
             curr_url = driver.current_url or ""
         except Exception:
             curr_url = ""
         nav_ts = _get_nav_marker(driver)
+
         if curr_url and pre_url and curr_url != pre_url and not redirect_url:
             redirect_url = curr_url
+
         if nav_ts is not None and pre_nav_ts is not None and nav_ts != pre_nav_ts:
             if (not redirect_url) and (curr_url == pre_url):
                 refreshed = True
+
         time.sleep(0.2)
+
+    # if no same-tab redirect, prefer first new-tab URL (if any)
     if not redirect_url and new_tabs:
         redirect_url = new_tabs[0].get("url", "") or ""
+
+    # try to refocus original
     try:
         driver.switch_to.window(list(pre_handles)[0])
     except Exception:
         pass
+
     return redirect_url, refreshed, new_tabs
 
-# ===== Driver =====
+# ----- Driver launcher -----
+
 def _apply_common_browser_flags(opts):
+    """Silence logs + disable noisy prompts and first-run nags."""
     opts.add_argument("--log-level=3")
     opts.add_argument("--disable-logging")
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
@@ -144,31 +163,13 @@ def _apply_common_browser_flags(opts):
     opts.add_argument("--no-first-run")
     opts.add_argument("--no-default-browser-check")
 
-def _seed_incognito_permission(profile_dir: Path, ext_id: str | None):
-    """
-    Pre-allow an extension in Incognito by writing Default/Preferences JSON.
-    This only matters if --incognito/--inprivate is used. Harmless otherwise.
-    """
-    if not ext_id:
-        return
-    default_dir = Path(profile_dir) / "Default"
-    default_dir.mkdir(parents=True, exist_ok=True)
-    prefs_path = default_dir / "Preferences"
-    prefs = {}
-    if prefs_path.exists():
-        try:
-            prefs = json.loads(prefs_path.read_text(encoding="utf-8") or "{}")
-        except Exception:
-            prefs = {}
-    prefs.setdefault("extensions", {}).setdefault("settings", {}).setdefault(ext_id, {})
-    prefs["extensions"]["settings"][ext_id]["incognito"] = 1  # 1 = allowed in Incognito
-    prefs["extensions"]["settings"][ext_id]["state"] = 1      # enabled
-    prefs_path.write_text(json.dumps(prefs, ensure_ascii=False), encoding="utf-8")
+def _flags_request_incognito(flags) -> bool:
+    """Detect whether flags include incognito/inprivate."""
+    f = " ".join(flags or [])
+    return ("--incognito" in f.lower()) or ("--inprivate" in f.lower())
 
 def _attach_extension(opts, extension_path: str | None):
-    """
-    Chrome/Edge/Brave/Opera can only load extensions at startup via Options.
-    """
+    """Chromium loads extensions only at startup. Supports unpacked dir or CRX."""
     if not extension_path:
         return
     p = Path(extension_path)
@@ -178,21 +179,15 @@ def _attach_extension(opts, extension_path: str | None):
             return
         except Exception:
             pass
-    # Unpacked dir or CRX fallback via --load-extension
     opts.add_argument(f"--load-extension={str(p)}")
-
-def _flags_request_incognito(flags) -> bool:
-    f = " ".join(flags or [])
-    return ("--incognito" in f.lower()) or ("--inprivate" in f.lower())
 
 def _make_driver(browser_binary: str | None,
                  privacy_flags,
                  privacy_prefs,
                  browser_name: str = "chrome",
-                 extension_path: str | None = None,
-                 chromium_extension_id: str | None = None):
+                 extension_path: str | None = None):
     """
-    Create a temp profile per run so state is isolated. We always pass --user-data-dir to the temp dir.
+    Launch a fresh, isolated temp profile per run so state never leaks across jobs.
     """
     b = (browser_name or "chrome").lower()
 
@@ -210,11 +205,6 @@ def _make_driver(browser_binary: str | None,
             opts.add_argument(f)
         if privacy_prefs:
             opts.add_experimental_option("prefs", privacy_prefs)
-        try:
-            if _flags_request_incognito(privacy_flags):
-                _seed_incognito_permission(profile_dir, chromium_extension_id)
-        except Exception:
-            pass
         _attach_extension(opts, extension_path)
         try:
             driver = webdriver.Edge(options=opts, service=EdgeService(log_output=subprocess.DEVNULL))
@@ -239,12 +229,6 @@ def _make_driver(browser_binary: str | None,
         opts.add_argument(f)
     if privacy_prefs:
         opts.add_experimental_option("prefs", privacy_prefs)
-
-    try:
-        if _flags_request_incognito(privacy_flags):
-            _seed_incognito_permission(profile_dir, chromium_extension_id)
-    except Exception:
-        pass
     _attach_extension(opts, extension_path)
 
     try:
@@ -259,13 +243,15 @@ def _make_driver(browser_binary: str | None,
         driver._temp_profile_dir = profile_dir
         return driver
 
-# ===== Main (called by pipeline) =====
+# ----- Main (called by pipeline) -----
+
 def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     """
-    DEFAULT: normal window.
-    If matrix privacy flags include --incognito/--inprivate, the browser launches Incognito.
-    NOTE: Landing is captured immediately after the first navigation; Before is at CHECKOUT;
-          After is post action (popup/toolbar) with a short watch window.
+    Flow:
+      - Open link (LANDING snapshot captured immediately).
+      - You browse to CHECKOUT and confirm; we capture BEFORE.
+      - You click popup/toolbar; we watch for redirects/refresh; capture AFTER.
+      - We write only 'campaign' columns + minimal diagnostics.
     """
     driver = _make_driver(
         job.get("browser_binary"),
@@ -273,14 +259,13 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         job.get("privacy_prefs") or {},
         job.get("browser") or "chrome",
         extension_path=job.get("extension_path"),
-        chromium_extension_id=job.get("chromium_extension_id"),  # may be absent/None
     )
     temp_profile = getattr(driver, "_temp_profile_dir", None)
 
     try:
         url = job["affiliate_link"]
 
-        # Navigate (retry once if window disappeared)
+        # Navigate (retry once if the window disappears unexpectedly)
         for attempt in (1, 2):
             try:
                 driver.get(url)
@@ -297,24 +282,23 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                         job.get("privacy_prefs") or {},
                         job.get("browser") or "chrome",
                         extension_path=job.get("extension_path"),
-                        chromium_extension_id=job.get("chromium_extension_id"),
                     )
                     temp_profile = getattr(driver, "_temp_profile_dir", None)
                     continue
                 else:
                     raise
 
-        # ---- LANDING SNAPSHOT (taken before any manual navigation to checkout) ----
+        # ---- LANDING snapshot (pre-checkout) ----
         landing_host = urlparse(driver.current_url or url).netloc
         landing_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
 
         print("\n=== MANUAL NAVIGATION ===")
         print("The browser is open at the link. The extension (Chromium) is already loaded.")
-        print("Navigate yourself to the CHECKOUT page.")
+        print("Please navigate to the CHECKOUT page.")
         print("When you are at CHECKOUT: type 'y' + Enter to continue (or 's' to skip).")
 
         before_coupon_cookies = None
-        popup_seen = ""  # your answer recorded below
+        popup_seen = ""  # record user's answer
         caps = driver.capabilities or {}
         browser_ver = caps.get("browserVersion") or caps.get("version") or ""
 
@@ -329,6 +313,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 before_host = urlparse(driver.current_url or url).netloc
 
+                # Ask if the extension popup is visible now
                 while True:
                     try:
                         q = input("Do you see the extension popup right now? [y]es / [n]o: ").strip().lower()
@@ -344,13 +329,13 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 break
 
             elif ans in ("s", "skip"):
-                # If skipping, Before == After; still write the row.
                 try:
                     before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 except Exception as e:
                     print(f"Warning: could not read cookies before skip ({e}). Proceeding empty.")
                     before_coupon_cookies = []
                 before_host = urlparse(driver.current_url or url).netloc
+                print("Skipping coupon step for this run as requested.")
                 after_coupon_cookies = before_coupon_cookies
                 after_host = before_host
                 new_tabs = []
@@ -369,7 +354,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 print("OK, still waiting. (Tip: press 's' to skip.)")
                 time.sleep(4)
 
-        # === ACTION ===
+        # === ACTION: click popup or toolbar ===
         print("\n=== ACTION ===")
         print("If a popup is visible, click it now; otherwise click the extension's toolbar button.")
         print("Press ENTER here right after you do that.")
@@ -395,6 +380,7 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         )
 
     finally:
+        # Cleanup
         try:
             driver.quit()
         except Exception:
@@ -405,7 +391,8 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             except Exception:
                 pass
 
-# ===== Output builders =====
+# ----- Output builders -----
+
 def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
                 landing_host, before_host, after_host,
                 landing_cookies, before_cookies, after_cookies,
@@ -424,14 +411,13 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
 
     prefix = f"{job.get('extension_ordinal',0)}." if job.get("extension_ordinal") else ""
 
-    # Wide row: include metadata + only three campaign columns
-    # COMPAT: add plain 'Website' using BEFORE host.
+    # Wide row: metadata + three 'campaign' columns + hosts
     wide = {
         "Plugin": job.get("extension_name",""),
         "Browser": job.get("browser","Chromium"),
         "Browser Privacy Level": job.get("privacy_name",""),
         "Browser Version": browser_ver,
-        "Website": before_host,  # compat
+        "Website": before_host,  # canonical site (Before)
         "Website (Landing)": landing_host,
         "Website (Before)": before_host,
         "Website (After)": after_host,
@@ -441,12 +427,11 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
         "campaign (After)":   prefix + after_campaign   if after_campaign   else "",
     }
 
-    # Clean_Data summary
+    # Clean_Data summary (legacy columns preserved with safe defaults)
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     new_tab_urls   = "; ".join([t.get("url","")   for t in new_tabs if t.get("url")])
     new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
 
-    # COMPAT: restore 'Merchant' and legacy counters/flag (set to safe defaults).
     clean_row = {
         "Timestamp": ts,
         "Test ID": job.get("job_id",""),
@@ -455,14 +440,14 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
         "Browser Version": browser_ver,
         "Extension": job.get("extension_name",""),
         "Extension Version": job.get("extension_version",""),
-        "Merchant": before_host,                    # compat
+        "Merchant": before_host,                    # keep 'Merchant' for backward compatibility
         "Merchant (Landing)": landing_host,
         "Merchant (Before)": before_host,
         "Merchant (After)": after_host,
         "Affiliate Link": job.get("affiliate_link",""),
-        "Coupon Applied?": "",                      # compat
-        "Cookies Added (count)": "0",               # compat (campaign-only mode)
-        "Cookies Changed (count)": "0",             # compat (campaign-only mode)
+        "Coupon Applied?": "",                      # legacy field; unknown here
+        "Cookies Added (count)": "0",               # campaign-only mode => not counting others
+        "Cookies Changed (count)": "0",             # campaign-only mode => not counting others
         "Extension Popup Seen?": popup_seen,
         "Redirect URL": redirect_url_final,
         "Refreshed?": "Yes" if refreshed else "No",
@@ -475,7 +460,7 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
         "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),
     }
 
-    # Diagnostics: only log campaign changes (ADDED / REMOVED / CHANGED) + host context
+    # Diagnostics: only log campaign ADDED/REMOVED/CHANGED
     diag_rows = []
     def _hash(v): return _h(v) if v is not None else ""
     b_hash = _hash(before_campaign)
@@ -497,17 +482,15 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
             "Browser Version": clean_row["Browser Version"],
             "Extension": clean_row["Extension"],
             "Extension Version": clean_row["Extension Version"],
-            "Merchant": before_host,  # compat primary
-            "Merchant (Before)": before_host,
-            "Merchant (After)": after_host,
+            "Merchant": before_host,
             "Affiliate Link": job.get("affiliate_link",""),
             "Cookie Name": "campaign",
             "Change": change,
             "Before Hash": b_hash or "",
             "After Hash": a_hash or "",
             "Observed At": ts,
-            "Snapshot Before Host": before_host,   # context
-            "Snapshot After Host": after_host,     # context
+            "Snapshot Before Host": before_host,
+            "Snapshot After Host": after_host,
         })
 
     append_cookie_comparison(out_workbook, wide)
