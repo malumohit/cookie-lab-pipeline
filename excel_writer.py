@@ -14,6 +14,11 @@ SHEET_DIAGNOSTICS = "Diagnostics"
 # --------- helpers ----------
 
 def _open_or_create(path: Path):
+    """
+    Open an existing workbook or create a new one.
+    We intentionally do not enforce a master schema: headers are added as needed
+    so the workbook can evolve across runs.
+    """
     path = Path(path)
     if path.exists():
         wb = load_workbook(path)
@@ -23,6 +28,10 @@ def _open_or_create(path: Path):
     return wb
 
 def _ensure_sheet(wb, sheet_name: str) -> Worksheet:
+    """
+    Return the sheet by name, creating it if missing.
+    If the default 'Sheet' is blank, rename and reuse it.
+    """
     if sheet_name in wb.sheetnames:
         return wb[sheet_name]
     # If workbook still has the default "Sheet" and it's empty, rename it
@@ -75,7 +84,6 @@ def _append_row(ws: Worksheet, row_dict: Dict[str, object]):
     """
     Append a row using keys from row_dict; headers added dynamically as needed.
     """
-    # We keep current headers in the sheet and only add what's missing from this row
     headers_needed = list(row_dict.keys())
     hdr_map = _ensure_headers(ws, headers_needed)
 
