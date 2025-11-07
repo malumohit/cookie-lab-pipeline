@@ -1,3 +1,6 @@
+# matrix.yaml — unchanged, but now the runners only capture "campaign".
+# You can still choose privacy profiles with --privacy (default/private/strict).
+
 master_workbook: "C:\\cookie-lab\\Mohit Cookie Stuffing File .xlsx"
 output_workbook: "C:\\cookie-lab\\agent_output.xlsx"
 
@@ -14,21 +17,21 @@ privacy_levels:
   firefox:
     - name: default
       prefs: {}
-    - name: private        # explicitly ask with --privacy private
+    - name: private        # ask with --privacy private
       prefs:
         browser.privatebrowsing.autostart: true
         extensions.allowPrivateBrowsingByDefault: true
-    - name: strict         # optional: stricter tracking without Private, if you want
+    - name: strict         # stricter tracking without Private
       prefs:
         privacy.trackingprotection.enabled: true
         network.cookie.cookieBehavior: 1       # block 3P cookies
   chromium:
     - name: default
       flags: []
-    - name: private        # explicitly ask with --privacy private
+    - name: private
       flags:
         - "--incognito"
-    - name: strict         # optional: strict without incognito
+    - name: strict
       flags:
         - "--disable-third-party-cookies"
 
@@ -37,7 +40,6 @@ extensions:
     version: "12.8.4"
     firefox_path:  "C:\\cookie-lab\\extensions\\firefox\\honey.xpi"
     chromium_path: "C:\\cookie-lab\\extensions\\chromium\\Honey 18.2.1"
-    # chromium_extension_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"  # optional: enables auto-allow in incognito
 
   - name: Rakuten
     version: "5.67.3"
