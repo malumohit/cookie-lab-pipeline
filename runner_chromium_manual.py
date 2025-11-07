@@ -3,6 +3,11 @@
 # for Landing / Before / After. DEFAULT: normal mode. If privacy flags include --incognito/--inprivate,
 # runs Incognito. NOTE: Chromium still loads the extension at launch (Chrome limitation).
 # We mitigate by adding a Landing snapshot (pre-checkout) and recording hosts.
+#
+# COMPAT PATCHES:
+# - Add plain 'Website' in Cookie Field Comparison (uses Before host as canonical).
+# - Restore legacy Clean_Data fields: 'Coupon Applied?', 'Cookies Added (count)', 'Cookies Changed (count)'.
+# - Restore 'Merchant' in Clean_Data (uses Before host as canonical).
 
 import os
 import time
@@ -302,7 +307,6 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
         # ---- LANDING SNAPSHOT (taken before any manual navigation to checkout) ----
         landing_host = urlparse(driver.current_url or url).netloc
         landing_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
-        landing_campaign = _get_campaign_value(landing_cookies)
 
         print("\n=== MANUAL NAVIGATION ===")
         print("The browser is open at the link. The extension (Chromium) is already loaded.")
@@ -408,18 +412,26 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
                 new_tabs, redirect_url_final, refreshed, popup_seen):
 
     # Extract only 'campaign' values at each snapshot
-    landing_campaign = _get_campaign_value(landing_cookies)
-    before_campaign  = _get_campaign_value(before_cookies)
-    after_campaign   = _get_campaign_value(after_cookies)
+    def _val(cset):
+        for c in cset:
+            if _is_campaign(c.get("name")):
+                return c.get("value") or ""
+        return ""
+
+    landing_campaign = _val(landing_cookies)
+    before_campaign  = _val(before_cookies)
+    after_campaign   = _val(after_cookies)
 
     prefix = f"{job.get('extension_ordinal',0)}." if job.get("extension_ordinal") else ""
 
     # Wide row: include metadata + only three campaign columns
+    # COMPAT: add plain 'Website' using BEFORE host.
     wide = {
         "Plugin": job.get("extension_name",""),
         "Browser": job.get("browser","Chromium"),
         "Browser Privacy Level": job.get("privacy_name",""),
         "Browser Version": browser_ver,
+        "Website": before_host,  # compat
         "Website (Landing)": landing_host,
         "Website (Before)": before_host,
         "Website (After)": after_host,
@@ -429,11 +441,12 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
         "campaign (After)":   prefix + after_campaign   if after_campaign   else "",
     }
 
-    # Clean_Data summary (kept similar so your dashboards don't break)
+    # Clean_Data summary
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     new_tab_urls   = "; ".join([t.get("url","")   for t in new_tabs if t.get("url")])
     new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
 
+    # COMPAT: restore 'Merchant' and legacy counters/flag (set to safe defaults).
     clean_row = {
         "Timestamp": ts,
         "Test ID": job.get("job_id",""),
@@ -442,10 +455,14 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
         "Browser Version": browser_ver,
         "Extension": job.get("extension_name",""),
         "Extension Version": job.get("extension_version",""),
+        "Merchant": before_host,                    # compat
         "Merchant (Landing)": landing_host,
         "Merchant (Before)": before_host,
         "Merchant (After)": after_host,
         "Affiliate Link": job.get("affiliate_link",""),
+        "Coupon Applied?": "",                      # compat
+        "Cookies Added (count)": "0",               # compat (campaign-only mode)
+        "Cookies Changed (count)": "0",             # compat (campaign-only mode)
         "Extension Popup Seen?": popup_seen,
         "Redirect URL": redirect_url_final,
         "Refreshed?": "Yes" if refreshed else "No",
@@ -458,11 +475,11 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
         "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),
     }
 
-    # Diagnostics: only log campaign changes (ADDED / REMOVED / CHANGED)
+    # Diagnostics: only log campaign changes (ADDED / REMOVED / CHANGED) + host context
     diag_rows = []
     def _hash(v): return _h(v) if v is not None else ""
-    b_hash = _hash(_get_campaign_value(before_cookies))
-    a_hash = _hash(_get_campaign_value(after_cookies))
+    b_hash = _hash(before_campaign)
+    a_hash = _hash(after_campaign)
 
     if before_campaign and not after_campaign:
         change = "REMOVED"
@@ -480,6 +497,7 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
             "Browser Version": clean_row["Browser Version"],
             "Extension": clean_row["Extension"],
             "Extension Version": clean_row["Extension Version"],
+            "Merchant": before_host,  # compat primary
             "Merchant (Before)": before_host,
             "Merchant (After)": after_host,
             "Affiliate Link": job.get("affiliate_link",""),
@@ -487,7 +505,9 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
             "Change": change,
             "Before Hash": b_hash or "",
             "After Hash": a_hash or "",
-            "Observed At": ts
+            "Observed At": ts,
+            "Snapshot Before Host": before_host,   # context
+            "Snapshot After Host": after_host,     # context
         })
 
     append_cookie_comparison(out_workbook, wide)
