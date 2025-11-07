@@ -1,3 +1,8 @@
+# pipeline.py — orchestrator
+# Iterates browsers × privacy profiles × extensions × links.
+# Passes redirect watch window and privacy settings to the runners.
+# Runners now collect only the 'campaign' cookie and include Landing/Before/After hosts.
+
 import argparse
 import sys
 import time
@@ -39,6 +44,7 @@ def parse_args():
 
 def load_matrix(path: str) -> dict:
     cfg = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    # Normalize certain fields to strings for robustness
     for e in cfg.get("extensions", []):
         if "name" in e and e["name"] is not None:
             e["name"] = str(e["name"])
@@ -180,7 +186,7 @@ def run_pipeline(
                     job = {
                         "job_id": job_id,
                         "browser": bname,
-                        "browser_binary": bcfg.get("binary"),  # used by runner_chromium_manual (optional)
+                        "browser_binary": bcfg.get("binary"),  # used by Chromium runner (optional)
                         "extension_name": ext_name,
                         "extension_version": ext_ver,
                         "extension_path": ext_path,
@@ -190,7 +196,7 @@ def run_pipeline(
                         "privacy_name": curr_privacy_name,
                         "privacy_prefs": privacy_prefs,
                         "privacy_flags": privacy_flags,
-                        # NOTE: no 'run_in_incognito' here; default is normal mode.
+                        # NOTE: default is normal mode. Private/incognito is driven entirely by privacy_* in matrix.yaml
                     }
 
                     print(f"\n=== RUN {job_id} ===")
