@@ -1,141 +1,228 @@
-# excel_writer.py — dynamic-column Excel writer using openpyxl only
-# Works even when new fields appear later (adds headers on the fly).
+# pipeline.py — orchestrator
+# Iterates browsers × privacy profiles × extensions × links.
+# Passes redirect watch window and privacy settings to the runners.
+# Runners now collect only the 'campaign' cookie and include Landing/Before/After hosts.
 
+import argparse
+import sys
+import time
 from pathlib import Path
-from typing import Dict, List, Iterable
-from openpyxl import Workbook, load_workbook
-from openpyxl.worksheet.worksheet import Worksheet
+import yaml
 
-# --------- config: sheet names ----------
-SHEET_COOKIE_COMPARISON = "Cookie Field Comparison"
-SHEET_CLEAN_DATA = "Clean_Data"
-SHEET_DIAGNOSTICS = "Diagnostics"
+from runner_firefox_manual import run_one as run_one_firefox
+from runner_chromium_manual import run_one as run_one_chromium
+# from runner_chromium_puppeteer import run_one as run_one_chromium
 
-# --------- helpers ----------
+CHROMIUM_FAMILY = ("chrome", "edge", "brave", "opera")
 
-def _open_or_create(path: Path):
+
+def resolve_extension_path(ext: dict, browser_name: str) -> str | None:
+    b = browser_name.lower()
+    if b == "firefox":
+        return ext.get("firefox_path")
+    if b in CHROMIUM_FAMILY:
+        return ext.get("chromium_path")
+    return None
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Cookie-test pipeline with resume + privacy levels")
+    p.add_argument("--matrix", default=r"C:\cookie-lab\matrix.yaml")
+    p.add_argument("--start-browser", default=None)
+    p.add_argument("--start-extension", default=None)
+    p.add_argument("--start-link", type=int, default=1)
+    p.add_argument("--only-extension", default=None)
+    p.add_argument("--redirect-window", type=float, default=6.0)
+    # Choose a privacy level defined in matrix.yaml -> privacy_levels
+    p.add_argument(
+        "--privacy",
+        default=None,
+        help="Privacy profile name to use (must match matrix.yaml privacy_levels for the browser family)",
+    )
+    return p.parse_args()
+
+
+def load_matrix(path: str) -> dict:
+    cfg = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    # Normalize certain fields to strings for robustness
+    for e in cfg.get("extensions", []):
+        if "name" in e and e["name"] is not None:
+            e["name"] = str(e["name"])
+        if "version" in e and e["version"] is not None:
+            e["version"] = str(e["version"])
+    for b in cfg.get("browsers", []):
+        if "name" in b and b["name"] is not None:
+            b["name"] = str(b["name"])
+        if "binary" in b and b["binary"] is not None:
+            b["binary"] = str(b["binary"])
+    return cfg
+
+
+def pick_runner(browser_name: str):
+    b = browser_name.lower()
+    if b == "firefox":
+        return run_one_firefox
+    if b in CHROMIUM_FAMILY:
+        return run_one_chromium
+    return None
+
+
+def _privacy_iter(cfg: dict, bname: str, requested: str | None):
     """
-    Open an existing workbook or create a new one.
-    We intentionally do not enforce a master schema: headers are added as needed
-    so the workbook can evolve across runs.
+    Yield privacy level dicts for this browser, optionally filtering by `requested`.
+    Allowed buckets:
+      - 'firefox'
+      - exact browser name for chromium family (e.g., 'brave', 'opera', 'edge', 'chrome')
+      - fallback 'chromium'
     """
-    path = Path(path)
-    if path.exists():
-        wb = load_workbook(path)
+    pl = cfg.get("privacy_levels", {})
+    if bname.lower() == "firefox":
+        levels = pl.get("firefox", [{"name": "default", "prefs": {}}])
     else:
-        wb = Workbook()
-        # openpyxl starts with a default sheet; we’ll reuse/rename on first use
-    return wb
+        levels = pl.get(bname.lower(), pl.get("chromium", [{"name": "default", "flags": []}]))
 
-def _ensure_sheet(wb, sheet_name: str) -> Worksheet:
-    """
-    Return the sheet by name, creating it if missing.
-    If the default 'Sheet' is blank, rename and reuse it.
-    """
-    if sheet_name in wb.sheetnames:
-        return wb[sheet_name]
-    # If workbook still has the default "Sheet" and it's empty, rename it
-    if len(wb.sheetnames) == 1 and wb.active.max_row == 1 and wb.active.max_column == 1 and wb.active["A1"].value is None:
-        ws = wb.active
-        ws.title = sheet_name
-        return ws
-    return wb.create_sheet(title=sheet_name)
+    if requested:
+        return [lvl for lvl in levels if str(lvl.get("name", "")).lower() == requested.lower()]
+    return levels
 
-def _header_map(ws: Worksheet) -> Dict[str, int]:
-    """
-    Return a mapping of header -> column index (1-based).
-    If no header row yet, returns {}.
-    """
-    if ws.max_row < 1:
-        return {}
-    headers = {}
-    row = ws[1]
-    for idx, cell in enumerate(row, start=1):
-        val = cell.value
-        if isinstance(val, str) and val.strip() != "":
-            headers[val] = idx
-    return headers
 
-def _ensure_headers(ws: Worksheet, needed_headers: Iterable[str]) -> Dict[str, int]:
-    """
-    Make sure every header in needed_headers exists. Any missing ones are appended to row 1.
-    Return the up-to-date header->col map.
-    """
-    hdrs = _header_map(ws)
-    if ws.max_row < 1 or not hdrs:
-        # initialize with needed headers, in order
-        for col_idx, key in enumerate(needed_headers, start=1):
-            ws.cell(row=1, column=col_idx, value=key)
-        return _header_map(ws)
+def run_pipeline(
+    cfg: dict,
+    start_browser=None,
+    start_ext=None,
+    start_link_idx: int = 1,
+    only_extension=None,
+    redirect_window: float = 6.0,
+    privacy_name: str | None = None,
+):
+    master = Path(cfg["master_workbook"])
+    output = Path(cfg["output_workbook"])
+    browsers = cfg.get("browsers", [])
+    extensions = cfg.get("extensions", [])
+    links = cfg.get("links", [])
 
-    # append missing
-    next_col = ws.max_column + 1
-    added = False
-    for key in needed_headers:
-        if key not in hdrs:
-            ws.cell(row=1, column=next_col, value=key)
-            hdrs[key] = next_col
-            next_col += 1
-            added = True
-    # if we appended, rebuild map to be safe
-    return _header_map(ws) if added else hdrs
+    if not browsers or not extensions or not links:
+        print("matrix.yaml must include non-empty browsers/extensions/links.", file=sys.stderr)
+        sys.exit(1)
 
-def _append_row(ws: Worksheet, row_dict: Dict[str, object]):
-    """
-    Append a row using keys from row_dict; headers added dynamically as needed.
-    """
-    headers_needed = list(row_dict.keys())
-    hdr_map = _ensure_headers(ws, headers_needed)
+    # Browser start index
+    if start_browser:
+        b_start_idx = next(
+            (i for i, b in enumerate(browsers) if b.get("name", "").lower() == start_browser.lower()),
+            None,
+        )
+        if b_start_idx is None:
+            raise SystemExit(f"Browser '{start_browser}' not found")
+    else:
+        b_start_idx = 0
 
-    # Next row index
-    r = ws.max_row + 1 if ws.max_row >= 1 else 1
-    # Fill by header order
-    for key, val in row_dict.items():
-        c = hdr_map[key]
-        ws.cell(row=r, column=c, value=val)
+    # Extension start index
+    if start_ext:
+        e_start_idx = next(
+            (i for i, e in enumerate(extensions) if e.get("name", "").lower() == start_ext.lower()),
+            None,
+        )
+        if e_start_idx is None:
+            raise SystemExit(f"Extension '{start_ext}' not found")
+    else:
+        e_start_idx = 0
 
-# --------- public API ----------
+    # Link start index (convert 1-based to 0-based)
+    if start_link_idx < 1 or start_link_idx > len(links):
+        raise SystemExit(f"--start-link must be between 1 and {len(links)}")
+    l_start_idx = start_link_idx - 1
 
-def append_cookie_comparison(out_workbook: Path, wide_row: Dict[str, object]):
-    """
-    Write a single 'wide' comparison row to 'Cookie Field Comparison'.
-    Adds any missing headers automatically.
-    """
-    wb = _open_or_create(out_workbook)
-    ws = _ensure_sheet(wb, SHEET_COOKIE_COMPARISON)
-    _append_row(ws, wide_row)
-    wb.save(out_workbook)
+    job_no = 0
 
-def append_clean_data_row(_master_workbook: Path, out_workbook: Path, clean_row: Dict[str, object]):
-    """
-    Append a row to 'Clean_Data'. We do not force a master schema; instead we add headers as they appear.
-    (The master workbook is accepted for backward compatibility but not required.)
-    """
-    wb = _open_or_create(out_workbook)
-    ws = _ensure_sheet(wb, SHEET_CLEAN_DATA)
-    _append_row(ws, clean_row)
-    wb.save(out_workbook)
+    for bi in range(b_start_idx, len(browsers)):
+        bcfg = browsers[bi]
+        bname = bcfg["name"]
+        runner = pick_runner(bname)
+        if runner is None:
+            print(f"(skip) browser '{bname}' not implemented.")
+            continue
 
-def append_diagnostics(out_workbook: Path, rows: List[Dict[str, object]]):
-    """
-    Append multiple rows to 'Diagnostics'. Dynamically adds headers based on union of keys across rows.
-    """
-    if not rows:
-        return
-    wb = _open_or_create(out_workbook)
-    ws = _ensure_sheet(wb, SHEET_DIAGNOSTICS)
+        # iterate privacy levels for this browser (filtered if --privacy is provided)
+        levels = _privacy_iter(cfg, bname, privacy_name)
+        if privacy_name and not levels:
+            bucket = (
+                "firefox"
+                if bname.lower() == "firefox"
+                else (bname.lower() if bname.lower() in ("brave", "opera", "edge", "chrome") else "chromium")
+            )
+            raise SystemExit(
+                f"Privacy level '{privacy_name}' not found for browser '{bname}'. "
+                f"Check matrix.yaml privacy_levels.{bucket}"
+            )
 
-    # Ensure union headers exist first (better column stability)
-    union_keys = []
-    seen = set()
-    for r in rows:
-        for k in r.keys():
-            if k not in seen:
-                seen.add(k)
-                union_keys.append(k)
-    _ensure_headers(ws, union_keys)
+        for pl in levels:
+            curr_privacy_name = pl.get("name", "default")
+            privacy_prefs = pl.get("prefs", {})
+            privacy_flags = pl.get("flags", [])
 
-    for r in rows:
-        _append_row(ws, r)
+            # extension iteration
+            e_iter = range(e_start_idx, len(extensions)) if bi == b_start_idx else range(0, len(extensions))
+            for ei in e_iter:
+                ext = extensions[ei]
+                ext_name = ext["name"]
+                ext_ver = str(ext.get("version", ""))
 
-    wb.save(out_workbook)
+                if only_extension and ext_name.lower() != only_extension.lower():
+                    continue
+
+                # resolve per-browser path (firefox_path / chromium_path)
+                ext_path = resolve_extension_path(ext, bname)
+                if not ext_path:
+                    print(f"(skip) {bname}: '{ext_name}' missing package for this browser.")
+                    continue
+
+                # links iteration
+                l_iter = range(l_start_idx, len(links)) if (bi == b_start_idx and ei == e_start_idx) else range(0, len(links))
+                for li in l_iter:
+                    link = links[li]
+                    job_no += 1
+                    job_id = f"job-{bname.lower()}-{ext_name.lower().replace(' ', '_')}-{curr_privacy_name}-{job_no:04d}"
+
+                    job = {
+                        "job_id": job_id,
+                        "browser": bname,
+                        "browser_binary": bcfg.get("binary"),  # used by Chromium runner (optional)
+                        "extension_name": ext_name,
+                        "extension_version": ext_ver,
+                        "extension_path": ext_path,
+                        "affiliate_link": link,
+                        "extension_ordinal": ei + 1,
+                        "redirect_window_sec": float(redirect_window),
+                        "privacy_name": curr_privacy_name,
+                        "privacy_prefs": privacy_prefs,
+                        "privacy_flags": privacy_flags,
+                        # NOTE: default is normal mode. Private/incognito is driven entirely by privacy_* in matrix.yaml
+                    }
+
+                    print(f"\n=== RUN {job_id} ===")
+                    try:
+                        runner(job, master, output)
+                    except Exception as e:
+                        print(f"!! ERROR in {job_id}: {e.__class__.__name__}: {e}")
+                    time.sleep(1.5)
+
+                if only_extension and ext_name.lower() == only_extension.lower():
+                    print(f"Only-extension '{only_extension}' completed. Exiting.")
+                    return
+
+            e_start_idx = 0
+            l_start_idx = 0
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    cfg = load_matrix(args.matrix)
+    run_pipeline(
+        cfg,
+        start_browser=args.start_browser,
+        start_ext=args.start_extension,
+        start_link_idx=args.start_link,
+        only_extension=args.only_extension,
+        redirect_window=args.redirect_window,
+        privacy_name=args.privacy,
+    )
