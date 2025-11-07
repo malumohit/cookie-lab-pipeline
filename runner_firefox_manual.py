@@ -6,6 +6,11 @@
 #   3) Record Landing/Before/After hosts.
 #   4) Capture *only* the 'campaign' cookie for Landing / Before / After.
 #   5) Diagnostics logs only 'campaign' change state.
+#
+# COMPAT PATCHES:
+# - Add plain 'Website' in Cookie Field Comparison (uses Before host).
+# - Restore legacy Clean_Data fields: 'Coupon Applied?', 'Cookies Added (count)', 'Cookies Changed (count)'.
+# - Restore 'Merchant' in Clean_Data (uses Before host).
 
 import time, hashlib
 from urllib.parse import urlparse
@@ -139,7 +144,6 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 before_host = urlparse(driver.current_url or job.get("affiliate_link", "")).netloc
 
                 # ---- Install the extension ONLY NOW (right before ACTION) ----
-                # This ensures the extension cannot set cookies that appear in 'Before'.
                 try:
                     driver.install_addon(job["extension_path"], temporary=True)
                 except Exception as e:
@@ -246,11 +250,13 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
 
     prefix = f"{job.get('extension_ordinal',0)}." if job.get("extension_ordinal") else ""
 
+    # COMPAT: add plain 'Website' using BEFORE host.
     wide = {
         "Plugin": job.get("extension_name", ""),
         "Browser": "Firefox",
         "Browser Privacy Level": job.get("privacy_name", ""),
         "Browser Version": browser_ver,
+        "Website": before_host,  # compat
         "Website (Landing)": landing_host,
         "Website (Before)": before_host,
         "Website (After)": after_host,
@@ -265,6 +271,7 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
     new_tab_urls   = "; ".join([t.get("url","") for t in new_tabs if t.get("url")])
     new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
 
+    # COMPAT: restore 'Merchant' and legacy counters/flag (set to safe defaults).
     clean_row = {
         "Timestamp": ts,
         "Test ID": job.get("job_id", ""),
@@ -273,10 +280,14 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Browser Version": browser_ver,
         "Extension": job.get("extension_name", ""),
         "Extension Version": job.get("extension_version", ""),
+        "Merchant": before_host,                   # compat
         "Merchant (Landing)": landing_host,
         "Merchant (Before)": before_host,
         "Merchant (After)": after_host,
         "Affiliate Link": job.get("affiliate_link", ""),
+        "Coupon Applied?": "",                     # compat
+        "Cookies Added (count)": "0",              # compat (campaign-only mode)
+        "Cookies Changed (count)": "0",            # compat (campaign-only mode)
         "Extension Popup Seen?": popup_seen,
         "Redirect URL": redirect_url_final,
         "Refreshed?": "Yes" if refreshed else "No",
@@ -289,7 +300,7 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
         "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),
     }
 
-    # Diagnostics: only 'campaign'
+    # Diagnostics: only 'campaign' + host context
     diag_rows = []
     def _hash(v): return _h(v) if v is not None else ""
     b_val = _get_campaign_value(before_cookies)
@@ -311,8 +322,9 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
             "Test ID": clean_row["Test ID"],
             "Browser": clean_row["Browser"],
             "Browser Version": clean_row["Browser Version"],
-            "Extension": clean_row["Extension"],
-            "Extension Version": clean_row["Extension Version"],
+            "Extension": job.get("extension_name", ""),
+            "Extension Version": job.get("extension_version", ""),
+            "Merchant": before_host,  # compat primary
             "Merchant (Before)": before_host,
             "Merchant (After)": after_host,
             "Affiliate Link": job.get("affiliate_link", ""),
@@ -320,7 +332,9 @@ def goto_comparison_and_write(job, src_workbook, out_workbook,
             "Change": change,
             "Before Hash": b_hash or "",
             "After Hash": a_hash or "",
-            "Observed At": ts
+            "Observed At": ts,
+            "Snapshot Before Host": before_host,   # context
+            "Snapshot After Host": after_host,     # context
         })
 
     append_cookie_comparison(out_workbook, wide)
