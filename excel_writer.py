@@ -1,5 +1,9 @@
 # excel_writer.py — dynamic-column Excel writer using openpyxl only
-# Works even when new fields appear later (adds headers on the fly).
+# Unchanged logic; just extra comments for clarity.
+# - Creates the workbook if it doesn't exist.
+# - Creates sheets on demand.
+# - Adds new headers the first time a new field appears.
+# - Appends rows without enforcing a fixed schema.
 
 from pathlib import Path
 from typing import Dict, List, Iterable
@@ -14,28 +18,25 @@ SHEET_DIAGNOSTICS = "Diagnostics"
 # --------- helpers ----------
 
 def _open_or_create(path: Path):
-    """
-    Open an existing workbook or create a new one.
-    We intentionally do not enforce a master schema: headers are added as needed
-    so the workbook can evolve across runs.
-    """
+    """Open workbook if present, otherwise create a fresh one."""
     path = Path(path)
     if path.exists():
         wb = load_workbook(path)
     else:
         wb = Workbook()
-        # openpyxl starts with a default sheet; we’ll reuse/rename on first use
+        # The default sheet will be reused/renamed on first write.
     return wb
 
 def _ensure_sheet(wb, sheet_name: str) -> Worksheet:
-    """
-    Return the sheet by name, creating it if missing.
-    If the default 'Sheet' is blank, rename and reuse it.
-    """
+    """Return an existing sheet or create/rename an empty default one."""
     if sheet_name in wb.sheetnames:
         return wb[sheet_name]
-    # If workbook still has the default "Sheet" and it's empty, rename it
-    if len(wb.sheetnames) == 1 and wb.active.max_row == 1 and wb.active.max_column == 1 and wb.active["A1"].value is None:
+    # If the default "Sheet" is empty, reuse it by renaming.
+    if (
+        len(wb.sheetnames) == 1 and
+        wb.active.max_row == 1 and wb.active.max_column == 1 and
+        wb.active["A1"].value is None
+    ):
         ws = wb.active
         ws.title = sheet_name
         return ws
@@ -43,7 +44,7 @@ def _ensure_sheet(wb, sheet_name: str) -> Worksheet:
 
 def _header_map(ws: Worksheet) -> Dict[str, int]:
     """
-    Return a mapping of header -> column index (1-based).
+    Return a mapping of header -> 1-based column index.
     If no header row yet, returns {}.
     """
     if ws.max_row < 1:
@@ -58,17 +59,17 @@ def _header_map(ws: Worksheet) -> Dict[str, int]:
 
 def _ensure_headers(ws: Worksheet, needed_headers: Iterable[str]) -> Dict[str, int]:
     """
-    Make sure every header in needed_headers exists. Any missing ones are appended to row 1.
-    Return the up-to-date header->col map.
+    Make sure every header in needed_headers exists. Missing ones are appended in row 1.
+    Return the up-to-date header->column map.
     """
     hdrs = _header_map(ws)
     if ws.max_row < 1 or not hdrs:
-        # initialize with needed headers, in order
+        # Initialize with the requested headers (ordered)
         for col_idx, key in enumerate(needed_headers, start=1):
             ws.cell(row=1, column=col_idx, value=key)
         return _header_map(ws)
 
-    # append missing
+    # Append any missing headers at the end
     next_col = ws.max_column + 1
     added = False
     for key in needed_headers:
@@ -77,19 +78,13 @@ def _ensure_headers(ws: Worksheet, needed_headers: Iterable[str]) -> Dict[str, i
             hdrs[key] = next_col
             next_col += 1
             added = True
-    # if we appended, rebuild map to be safe
     return _header_map(ws) if added else hdrs
 
 def _append_row(ws: Worksheet, row_dict: Dict[str, object]):
-    """
-    Append a row using keys from row_dict; headers added dynamically as needed.
-    """
+    """Append a row; add any missing headers on the fly."""
     headers_needed = list(row_dict.keys())
     hdr_map = _ensure_headers(ws, headers_needed)
-
-    # Next row index
     r = ws.max_row + 1 if ws.max_row >= 1 else 1
-    # Fill by header order
     for key, val in row_dict.items():
         c = hdr_map[key]
         ws.cell(row=r, column=c, value=val)
@@ -97,10 +92,7 @@ def _append_row(ws: Worksheet, row_dict: Dict[str, object]):
 # --------- public API ----------
 
 def append_cookie_comparison(out_workbook: Path, wide_row: Dict[str, object]):
-    """
-    Write a single 'wide' comparison row to 'Cookie Field Comparison'.
-    Adds any missing headers automatically.
-    """
+    """Write a single 'wide' comparison row to 'Cookie Field Comparison'."""
     wb = _open_or_create(out_workbook)
     ws = _ensure_sheet(wb, SHEET_COOKIE_COMPARISON)
     _append_row(ws, wide_row)
@@ -108,8 +100,8 @@ def append_cookie_comparison(out_workbook: Path, wide_row: Dict[str, object]):
 
 def append_clean_data_row(_master_workbook: Path, out_workbook: Path, clean_row: Dict[str, object]):
     """
-    Append a row to 'Clean_Data'. We do not force a master schema; instead we add headers as they appear.
-    (The master workbook is accepted for backward compatibility but not required.)
+    Append a row to 'Clean_Data'. We don't enforce a master schema; headers appear as needed.
+    (master_workbook is accepted for backward-compat only.)
     """
     wb = _open_or_create(out_workbook)
     ws = _ensure_sheet(wb, SHEET_CLEAN_DATA)
@@ -118,14 +110,15 @@ def append_clean_data_row(_master_workbook: Path, out_workbook: Path, clean_row:
 
 def append_diagnostics(out_workbook: Path, rows: List[Dict[str, object]]):
     """
-    Append multiple rows to 'Diagnostics'. Dynamically adds headers based on union of keys across rows.
+    Append multiple rows to 'Diagnostics'.
+    Ensures the union of keys across rows exists as headers before writing.
     """
     if not rows:
         return
     wb = _open_or_create(out_workbook)
     ws = _ensure_sheet(wb, SHEET_DIAGNOSTICS)
 
-    # Ensure union headers exist first (better column stability)
+    # Ensure union headers exist first (for stable columns)
     union_keys = []
     seen = set()
     for r in rows:
