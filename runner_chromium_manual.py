@@ -1,7 +1,8 @@
 # runner_chromium_manual.py — Chromium runner (Chrome/Edge/Brave/Opera)
-# Fresh temp profile per run; redirect/refresh/new-tab watch; cookie diffs; writes to Excel.
-# DEFAULT: normal mode. If privacy flags include --incognito/--inprivate, runs Incognito.
-# Auto-loads extension; (optionally) pre-allows it for Incognito if an ID is supplied.
+# Fresh temp profile per run; redirect/refresh/new-tab watch; writes only the `campaign` cookie
+# for Landing / Before / After. DEFAULT: normal mode. If privacy flags include --incognito/--inprivate,
+# runs Incognito. NOTE: Chromium still loads the extension at launch (Chrome limitation).
+# We mitigate by adding a Landing snapshot (pre-checkout) and recording hosts.
 
 import os
 import time
@@ -42,52 +43,17 @@ except Exception:
 
 from excel_writer import append_clean_data_row, append_diagnostics, append_cookie_comparison
 
-# ===== TARGET COOKIES =====
-TARGET_ORDER = [
-    "NV_MC_LC","NV_MC_FC","NV_ECM_TK_LC",
-    "__attentive_utm_param_campaign","__attentive_utm_param_source","__attentive_utm_param_medium",
-    "__attentive_utm_param_term","__attentive_utm_param_content",
-    "campaign","campaign_id","campaign_date","campaign_source","campaign_medium","campaign_name",
-    "utm_source","utm_medium","utm_campaign","utm_term","utm_content",
-    "affid","aff_id","affiliate","affiliate_id","affiliate_source","affsource","aff_source","affname",
-    "aff_sub","aff_sub2","aff_sub3","aff_sub4","aff_sub5","subid","sub_id",
-    "awinaffid","awcid","awcr","aw_referrer","aw_click_id",
-    "cjevent","cjData",
-    "irclickid","irgwc","irpid","iradid","iradname",
-    "sscid","scid",
-    "prms","prm_expid","prm_click",
-    "gclid","gclsrc","dclid","fbclid","msclkid","ttclid","twclid","yclid",
-    "_ga","_ga_*","_gid","_gat","_gat_*","_gcl_au","_gcl_aw","_gcl_dc",
-    "_fbp","_fbc","_uetsid","_uetvid","_tt_enable_cookie","_ttp","_pin_unauth","_rdt_uuid",
-    "AMCV_","s_cc","s_sq","mbox","mboxEdgeCluster",
-    "ref","referrer","source","campaignCode","promo","promocode","coupon","coupon_code",
-    "session_id","sessionid","sid",
-]
+# ===== Single-target cookie: 'campaign' (case-insensitive exact name) =====
+TARGET_NAME = "campaign"
 
-_CANON_EXACT = {name.lower(): name for name in TARGET_ORDER if not name.endswith("*") and not name.endswith("_")}
-_PREFIXES = []
-for name in TARGET_ORDER:
-    if name.endswith("*"):
-        _PREFIXES.append(name[:-1].lower())
-    elif name.endswith("_"):
-        _PREFIXES.append(name.lower())
+def _is_campaign(raw_name: str) -> bool:
+    return isinstance(raw_name, str) and raw_name.lower() == TARGET_NAME
 
-def _is_target_name(raw_name: str) -> str | None:
-    if not raw_name:
-        return None
-    ln = raw_name.lower()
-    if ln in _CANON_EXACT:
-        return _CANON_EXACT[ln]
-    for p in _PREFIXES:
-        if ln.startswith(p):
-            return raw_name
-    return None
-
-# ===== Cookie helpers =====
 def _h(v: str) -> str:
     return hashlib.sha256((v or "").encode("utf-8")).hexdigest()[:16]
 
 def _cookie_frame_full(c: dict) -> dict:
+    # Normalize a Selenium cookie dict for stable comparisons / hashing
     return {
         "name": c.get("name"),
         "value": c.get("value") or "",
@@ -100,24 +66,15 @@ def _cookie_frame_full(c: dict) -> dict:
         "sameSite": c.get("sameSite"),
     }
 
-def _snapshot_targets(cookies):
-    out = {}
+def _get_campaign_value(cookies):
+    """
+    Return first 'campaign' cookie value if present on the current domain snapshot;
+    else return empty string. (Selenium exposes cookies only for the CURRENT host.)
+    """
     for c in cookies:
-        cname = c.get("name") or ""
-        canon = _is_target_name(cname)
-        if canon:
-            val = c.get("value") or ""
-            out[canon] = {"value": val, "hash": _h(val)}
-    return out
-
-def _sanitize_cookie_name(name: str) -> str:
-    if name is None:
-        return "Cookie:UNKNOWN"
-    safe = name.replace("\r"," ").replace("\n"," ").replace("\t"," ").strip()
-    return safe if safe.startswith("Cookie:") else f"Cookie:{safe}"
-
-def _before_key(name: str) -> str: return _sanitize_cookie_name(name) + " (Before)"
-def _after_key(name: str)  -> str: return _sanitize_cookie_name(name) + " (After)"
+        if _is_campaign(c.get("name")):
+            return c.get("value") or ""
+    return ""
 
 # ===== Nav helpers =====
 def _get_nav_marker(driver):
@@ -127,6 +84,12 @@ def _get_nav_marker(driver):
         return None
 
 def _observe_redirect_refresh_and_tabs(driver, pre_url, pre_nav_ts, pre_handles, window_sec=6.0):
+    """
+    After the user clicks the extension/popup, watch briefly for:
+      - a URL change (redirect)
+      - a refresh (navigation timestamp changed while URL stayed)
+      - newly opened tabs/windows (collect title+URL)
+    """
     t0 = time.time()
     seen_handles = set(pre_handles)
     new_tabs, redirect_url, refreshed = [], "", False
@@ -177,7 +140,10 @@ def _apply_common_browser_flags(opts):
     opts.add_argument("--no-default-browser-check")
 
 def _seed_incognito_permission(profile_dir: Path, ext_id: str | None):
-    # Pre-allow extension in Incognito by writing Default/Preferences JSON (only useful if Incognito is used)
+    """
+    Pre-allow an extension in Incognito by writing Default/Preferences JSON.
+    This only matters if --incognito/--inprivate is used. Harmless otherwise.
+    """
     if not ext_id:
         return
     default_dir = Path(profile_dir) / "Default"
@@ -195,6 +161,9 @@ def _seed_incognito_permission(profile_dir: Path, ext_id: str | None):
     prefs_path.write_text(json.dumps(prefs, ensure_ascii=False), encoding="utf-8")
 
 def _attach_extension(opts, extension_path: str | None):
+    """
+    Chrome/Edge/Brave/Opera can only load extensions at startup via Options.
+    """
     if not extension_path:
         return
     p = Path(extension_path)
@@ -204,7 +173,8 @@ def _attach_extension(opts, extension_path: str | None):
             return
         except Exception:
             pass
-    opts.add_argument(f"--load-extension={str(p)}")  # unpacked dir or CRX fallback
+    # Unpacked dir or CRX fallback via --load-extension
+    opts.add_argument(f"--load-extension={str(p)}")
 
 def _flags_request_incognito(flags) -> bool:
     f = " ".join(flags or [])
@@ -216,6 +186,9 @@ def _make_driver(browser_binary: str | None,
                  browser_name: str = "chrome",
                  extension_path: str | None = None,
                  chromium_extension_id: str | None = None):
+    """
+    Create a temp profile per run so state is isolated. We always pass --user-data-dir to the temp dir.
+    """
     b = (browser_name or "chrome").lower()
 
     if b == "edge":
@@ -232,7 +205,6 @@ def _make_driver(browser_binary: str | None,
             opts.add_argument(f)
         if privacy_prefs:
             opts.add_experimental_option("prefs", privacy_prefs)
-        # Pre-allow incognito only matters if flags include it; harmless otherwise.
         try:
             if _flags_request_incognito(privacy_flags):
                 _seed_incognito_permission(profile_dir, chromium_extension_id)
@@ -287,6 +259,8 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
     """
     DEFAULT: normal window.
     If matrix privacy flags include --incognito/--inprivate, the browser launches Incognito.
+    NOTE: Landing is captured immediately after the first navigation; Before is at CHECKOUT;
+          After is post action (popup/toolbar) with a short watch window.
     """
     driver = _make_driver(
         job.get("browser_binary"),
@@ -325,16 +299,20 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 else:
                     raise
 
+        # ---- LANDING SNAPSHOT (taken before any manual navigation to checkout) ----
+        landing_host = urlparse(driver.current_url or url).netloc
+        landing_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
+        landing_campaign = _get_campaign_value(landing_cookies)
+
         print("\n=== MANUAL NAVIGATION ===")
-        print("The browser is open at the link. The extension is already loaded.")
-        print("Browse yourself to the CHECKOUT page.")
+        print("The browser is open at the link. The extension (Chromium) is already loaded.")
+        print("Navigate yourself to the CHECKOUT page.")
         print("When you are at CHECKOUT: type 'y' + Enter to continue (or 's' to skip).")
 
         before_coupon_cookies = None
         popup_seen = ""  # your answer recorded below
         caps = driver.capabilities or {}
         browser_ver = caps.get("browserVersion") or caps.get("version") or ""
-        domain = urlparse(driver.current_url or url).netloc
 
         # Wait for checkout confirmation
         while True:
@@ -345,9 +323,8 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
 
             if ans in ("y", "yes"):
                 before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
-                domain = urlparse(driver.current_url or url).netloc
+                before_host = urlparse(driver.current_url or url).netloc
 
-                # Ask if the extension popup is visible now
                 while True:
                     try:
                         q = input("Do you see the extension popup right now? [y]es / [n]o: ").strip().lower()
@@ -363,31 +340,32 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 break
 
             elif ans in ("s", "skip"):
+                # If skipping, Before == After; still write the row.
                 try:
                     before_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
                 except Exception as e:
                     print(f"Warning: could not read cookies before skip ({e}). Proceeding empty.")
                     before_coupon_cookies = []
-                try:
-                    domain = urlparse(driver.current_url or url).netloc
-                except Exception:
-                    domain = url
-                print("Skipping coupon step for this run as requested.")
+                before_host = urlparse(driver.current_url or url).netloc
                 after_coupon_cookies = before_coupon_cookies
+                after_host = before_host
                 new_tabs = []
                 redirect_url = ""
                 refreshed = False
                 popup_seen = "Skipped"
-                _write_rows(job, src_workbook, out_workbook, driver, browser_ver, domain,
-                            before_coupon_cookies, after_coupon_cookies, new_tabs,
-                            redirect_url, refreshed, popup_seen)
+                _write_rows(
+                    job, src_workbook, out_workbook, driver, browser_ver,
+                    landing_host, before_host, after_host,
+                    landing_cookies, before_coupon_cookies, after_coupon_cookies,
+                    new_tabs, redirect_url, refreshed, popup_seen
+                )
                 return
 
             else:
                 print("OK, still waiting. (Tip: press 's' to skip.)")
                 time.sleep(4)
 
-        # === Your action step ===
+        # === ACTION ===
         print("\n=== ACTION ===")
         print("If a popup is visible, click it now; otherwise click the extension's toolbar button.")
         print("Press ENTER here right after you do that.")
@@ -403,10 +381,14 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
             driver, pre_url, pre_nav_ts, pre_handles, window_sec=float(job.get("redirect_window_sec", 6.0))
         )
         after_coupon_cookies = [_cookie_frame_full(c) for c in driver.get_cookies()]
+        after_host = urlparse(driver.current_url or url).netloc
 
-        _write_rows(job, src_workbook, out_workbook, driver, browser_ver, domain,
-                    before_coupon_cookies, after_coupon_cookies, new_tabs,
-                    redirect_url, refreshed, popup_seen)
+        _write_rows(
+            job, src_workbook, out_workbook, driver, browser_ver,
+            landing_host, before_host, after_host,
+            landing_cookies, before_coupon_cookies, after_coupon_cookies,
+            new_tabs, redirect_url, refreshed, popup_seen
+        )
 
     finally:
         try:
@@ -420,58 +402,38 @@ def run_one(job: dict, src_workbook: Path, out_workbook: Path):
                 pass
 
 # ===== Output builders =====
-def _write_rows(job, src_workbook, out_workbook, driver, browser_ver, domain,
-                before_cookies, after_cookies, new_tabs, redirect_url_final, refreshed, popup_seen):
+def _write_rows(job, src_workbook, out_workbook, driver, browser_ver,
+                landing_host, before_host, after_host,
+                landing_cookies, before_cookies, after_cookies,
+                new_tabs, redirect_url_final, refreshed, popup_seen):
+
+    # Extract only 'campaign' values at each snapshot
+    landing_campaign = _get_campaign_value(landing_cookies)
+    before_campaign  = _get_campaign_value(before_cookies)
+    after_campaign   = _get_campaign_value(after_cookies)
+
     prefix = f"{job.get('extension_ordinal',0)}." if job.get("extension_ordinal") else ""
 
-    new_tab_urls   = "; ".join([t.get("url","")   for t in new_tabs if t.get("url")])
-    new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
-
-    before_targets = _snapshot_targets(before_cookies)
-    after_targets  = _snapshot_targets(after_cookies)
-
-    def val_before(name): return (prefix + (before_targets.get(name, {}).get("value","") or "")) if name in before_targets else ""
-    def val_after(name):  return (prefix + (after_targets.get(name,  {}).get("value","") or "")) if name in after_targets  else ""
-
+    # Wide row: include metadata + only three campaign columns
     wide = {
         "Plugin": job.get("extension_name",""),
         "Browser": job.get("browser","Chromium"),
         "Browser Privacy Level": job.get("privacy_name",""),
         "Browser Version": browser_ver,
-        "Website": domain,
+        "Website (Landing)": landing_host,
+        "Website (Before)": before_host,
+        "Website (After)": after_host,
         "Affiliate Link": job.get("affiliate_link",""),
+        "campaign (Landing)": prefix + landing_campaign if landing_campaign else "",
+        "campaign (Before)":  prefix + before_campaign  if before_campaign  else "",
+        "campaign (After)":   prefix + after_campaign   if after_campaign   else "",
     }
 
-    for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
-        wide[f"{ck} (Before)"] = val_before(ck)
-        wide[f"{ck} (After)"]  = val_after(ck)
-
-    def key(c): return (c["name"], c["domain"], c["path"])
-    bmap = {key(c): c for c in before_cookies}
-    amap = {key(c): c for c in after_cookies}
-
-    changed_names = set()
-    for k in amap.keys() - bmap.keys(): changed_names.add(amap[k]["name"])
-    for k in bmap.keys() - amap.keys(): changed_names.add(bmap[k]["name"])
-    for k in amap.keys() & bmap.keys():
-        if amap[k]["value_hash"] != bmap[k]["value_hash"]:
-            changed_names.add(amap[k]["name"])
-
-    for name in sorted(changed_names, key=lambda x: (x or "").lower()):
-        if _is_target_name(name):
-            continue
-        bvals = [c["value"] for c in before_cookies if c["name"] == name]
-        avals = [c["value"] for c in after_cookies  if c["name"] == name]
-        wide[_before_key(name)] = (prefix + bvals[0]) if bvals else ""
-        wide[_after_key(name)]  = (prefix + avals[0]) if avals else ""
-
-    added = [amap[k] for k in amap.keys() - bmap.keys()]
-    changed = []
-    for k in amap.keys() & bmap.keys():
-        if amap[k]["value_hash"] != bmap[k]["value_hash"]:
-            changed.append({"before": bmap[k], "after": amap[k]})
-
+    # Clean_Data summary (kept similar so your dashboards don't break)
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    new_tab_urls   = "; ".join([t.get("url","")   for t in new_tabs if t.get("url")])
+    new_tab_titles = "; ".join([t.get("title","") for t in new_tabs if t.get("title")])
+
     clean_row = {
         "Timestamp": ts,
         "Test ID": job.get("job_id",""),
@@ -480,66 +442,55 @@ def _write_rows(job, src_workbook, out_workbook, driver, browser_ver, domain,
         "Browser Version": browser_ver,
         "Extension": job.get("extension_name",""),
         "Extension Version": job.get("extension_version",""),
-        "Merchant": domain,
+        "Merchant (Landing)": landing_host,
+        "Merchant (Before)": before_host,
+        "Merchant (After)": after_host,
         "Affiliate Link": job.get("affiliate_link",""),
-        "Coupon Applied?": "",
         "Extension Popup Seen?": popup_seen,
-        "New Pages Opened": str(len(new_tabs)),
-        "Cookies Added (count)": str(len(added)),
-        "Cookies Changed (count)": str(len(changed)),
         "Redirect URL": redirect_url_final,
         "Refreshed?": "Yes" if refreshed else "No",
+        "New Pages Opened": str(len(new_tabs)),
         "New Tab URLs": new_tab_urls,
         "New Tab Titles": new_tab_titles,
-        "HAR Path": "",
-        "Screenshots": "",
         "Status": "SUCCESS",
         "Failure Reason": "",
-        "Notes": f"CookieComparisonRow=1; Tabs={len(new_tabs)}",
+        "Notes": "Only-campaign-capture",
         "Redirect Window (s)": str(job.get("redirect_window_sec", 6.0)),
     }
 
-    append_cookie_comparison(out_workbook, wide)
-    append_clean_data_row(src_workbook, out_workbook, clean_row)
-
+    # Diagnostics: only log campaign changes (ADDED / REMOVED / CHANGED)
     diag_rows = []
-    for ck in sorted(before_targets.keys() | after_targets.keys(), key=lambda x: x.lower()):
-        b_hash = before_targets.get(ck, {}).get("hash")
-        a_hash = after_targets.get(ck, {}).get("hash")
+    def _hash(v): return _h(v) if v is not None else ""
+    b_hash = _hash(_get_campaign_value(before_cookies))
+    a_hash = _hash(_get_campaign_value(after_cookies))
+
+    if before_campaign and not after_campaign:
+        change = "REMOVED"
+    elif after_campaign and not before_campaign:
+        change = "ADDED"
+    elif before_campaign and after_campaign and (b_hash != a_hash):
+        change = "CHANGED"
+    else:
         change = "UNCHANGED"
-        if ck in before_targets and ck not in after_targets: change = "REMOVED"
-        elif ck in after_targets and ck not in before_targets: change = "ADDED"
-        elif (b_hash is not None) and (a_hash is not None) and b_hash != a_hash: change = "CHANGED"
-        if change != "UNCHANGED":
-            diag_rows.append({
-                "Test ID": clean_row["Test ID"],
-                "Browser": clean_row["Browser"],
-                "Browser Version": clean_row["Browser Version"],
-                "Extension": clean_row["Extension"],
-                "Extension Version": clean_row["Extension Version"],
-                "Merchant": domain,
-                "Affiliate Link": job.get("affiliate_link",""),
-                "Cookie Name": ck,
-                "Change": change,
-                "Before Hash": b_hash or "",
-                "After Hash": a_hash or "",
-                "Observed At": ts
-            })
-    for tab in new_tabs:
+
+    if change != "UNCHANGED":
         diag_rows.append({
             "Test ID": clean_row["Test ID"],
             "Browser": clean_row["Browser"],
             "Browser Version": clean_row["Browser Version"],
             "Extension": clean_row["Extension"],
             "Extension Version": clean_row["Extension Version"],
-            "Merchant": domain,
+            "Merchant (Before)": before_host,
+            "Merchant (After)": after_host,
             "Affiliate Link": job.get("affiliate_link",""),
-            "Cookie Name": "(new_tab)",
-            "Change": tab.get("title",""),
-            "Before Hash": "",
-            "After Hash": tab.get("url",""),
+            "Cookie Name": "campaign",
+            "Change": change,
+            "Before Hash": b_hash or "",
+            "After Hash": a_hash or "",
             "Observed At": ts
         })
-    append_diagnostics(out_workbook, diag_rows)
 
-    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (Chromium).")
+    append_cookie_comparison(out_workbook, wide)
+    append_clean_data_row(src_workbook, out_workbook, clean_row)
+    append_diagnostics(out_workbook, diag_rows)
+    print("✔ Wrote: Clean_Data + Diagnostics + Cookie Field Comparison (Chromium, campaign-only).")
