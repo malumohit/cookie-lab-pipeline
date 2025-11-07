@@ -1,7 +1,8 @@
 # pipeline.py — orchestrator
 # Iterates browsers × privacy profiles × extensions × links.
 # Passes redirect watch window and privacy settings to the runners.
-# Runners now collect only the 'campaign' cookie and include Landing/Before/After hosts.
+# Runners capture only the 'campaign' cookie for Landing / Before / After and
+# log Diagnostics only if 'campaign' changed.
 
 import argparse
 import sys
@@ -11,19 +12,18 @@ import yaml
 
 from runner_firefox_manual import run_one as run_one_firefox
 from runner_chromium_manual import run_one as run_one_chromium
-# from runner_chromium_puppeteer import run_one as run_one_chromium
+# from runner_chromium_puppeteer import run_one as run_one_chromium  # (not used here)
 
 CHROMIUM_FAMILY = ("chrome", "edge", "brave", "opera")
 
-
 def resolve_extension_path(ext: dict, browser_name: str) -> str | None:
+    """Pick the correct package path for this browser family."""
     b = browser_name.lower()
     if b == "firefox":
         return ext.get("firefox_path")
     if b in CHROMIUM_FAMILY:
         return ext.get("chromium_path")
     return None
-
 
 def parse_args():
     p = argparse.ArgumentParser(description="Cookie-test pipeline with resume + privacy levels")
@@ -33,7 +33,7 @@ def parse_args():
     p.add_argument("--start-link", type=int, default=1)
     p.add_argument("--only-extension", default=None)
     p.add_argument("--redirect-window", type=float, default=6.0)
-    # Choose a privacy level defined in matrix.yaml -> privacy_levels
+    # Choose a privacy level name from matrix.yaml -> privacy_levels
     p.add_argument(
         "--privacy",
         default=None,
@@ -41,10 +41,9 @@ def parse_args():
     )
     return p.parse_args()
 
-
 def load_matrix(path: str) -> dict:
+    """Load YAML and normalize text fields to strings for robustness."""
     cfg = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    # Normalize certain fields to strings for robustness
     for e in cfg.get("extensions", []):
         if "name" in e and e["name"] is not None:
             e["name"] = str(e["name"])
@@ -57,8 +56,8 @@ def load_matrix(path: str) -> dict:
             b["binary"] = str(b["binary"])
     return cfg
 
-
 def pick_runner(browser_name: str):
+    """Return the appropriate runner function for this browser."""
     b = browser_name.lower()
     if b == "firefox":
         return run_one_firefox
@@ -66,13 +65,12 @@ def pick_runner(browser_name: str):
         return run_one_chromium
     return None
 
-
 def _privacy_iter(cfg: dict, bname: str, requested: str | None):
     """
-    Yield privacy level dicts for this browser, optionally filtering by `requested`.
-    Allowed buckets:
+    Yield privacy level dicts for this browser, optionally filtered by `requested`.
+    Buckets:
       - 'firefox'
-      - exact browser name for chromium family (e.g., 'brave', 'opera', 'edge', 'chrome')
+      - exact chromium browser name (brave/opera/edge/chrome)
       - fallback 'chromium'
     """
     pl = cfg.get("privacy_levels", {})
@@ -84,7 +82,6 @@ def _privacy_iter(cfg: dict, bname: str, requested: str | None):
     if requested:
         return [lvl for lvl in levels if str(lvl.get("name", "")).lower() == requested.lower()]
     return levels
-
 
 def run_pipeline(
     cfg: dict,
@@ -127,7 +124,7 @@ def run_pipeline(
     else:
         e_start_idx = 0
 
-    # Link start index (convert 1-based to 0-based)
+    # Link start index (1-based -> 0-based)
     if start_link_idx < 1 or start_link_idx > len(links):
         raise SystemExit(f"--start-link must be between 1 and {len(links)}")
     l_start_idx = start_link_idx - 1
@@ -196,7 +193,7 @@ def run_pipeline(
                         "privacy_name": curr_privacy_name,
                         "privacy_prefs": privacy_prefs,
                         "privacy_flags": privacy_flags,
-                        # NOTE: default is normal mode. Private/incognito is driven entirely by privacy_* in matrix.yaml
+                        # NOTE: default is normal mode. Private/incognito is controlled by privacy_* in matrix.yaml
                     }
 
                     print(f"\n=== RUN {job_id} ===")
@@ -212,7 +209,6 @@ def run_pipeline(
 
             e_start_idx = 0
             l_start_idx = 0
-
 
 if __name__ == "__main__":
     args = parse_args()
