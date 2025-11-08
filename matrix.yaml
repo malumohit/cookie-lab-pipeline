@@ -1,6 +1,3 @@
-# matrix.yaml — unchanged, but now the runners only capture "campaign".
-# You can still choose privacy profiles with --privacy (default/private/strict).
-
 master_workbook: "C:\\cookie-lab\\Mohit Cookie Stuffing File .xlsx"
 output_workbook: "C:\\cookie-lab\\agent_output.xlsx"
 
@@ -17,23 +14,54 @@ privacy_levels:
   firefox:
     - name: default
       prefs: {}
-    - name: private        # ask with --privacy private
-      prefs:
-        browser.privatebrowsing.autostart: true
-        extensions.allowPrivateBrowsingByDefault: true
-    - name: strict         # stricter tracking without Private
+    - name: anti-tracking
       prefs:
         privacy.trackingprotection.enabled: true
-        network.cookie.cookieBehavior: 1       # block 3P cookies
+        privacy.trackingprotection.socialtracking.enabled: true
+        network.cookie.cookieBehavior: 1   # block third-party cookies
+
+  chrome:
+    - name: default
+      flags: []
+      prefs: {}
+    - name: anti-tracking
+      flags:
+        - "--disable-third-party-cookies"
+      prefs:
+        profile.block_third_party_cookies: true
+
+  edge:
+    - name: default
+      flags: []
+      prefs: {}
+    - name: anti-tracking
+      # Edge is Chromium-based; use same 3P cookie blocking approach
+      flags:
+        - "--disable-third-party-cookies"
+      prefs:
+        profile.block_third_party_cookies: true
+
+  brave:
+    - name: default
+      flags: []
+      prefs: {}
+    - name: anti-tracking
+      flags:
+        - "--disable-third-party-cookies"
+        - "--brave-global-shields=3"    # Shields: Aggressive
+      prefs:
+        profile.block_third_party_cookies: true
+
+  # fallback for opera/others in chromium family
   chromium:
     - name: default
       flags: []
-    - name: private
-      flags:
-        - "--incognito"
-    - name: strict
+      prefs: {}
+    - name: anti-tracking
       flags:
         - "--disable-third-party-cookies"
+      prefs:
+        profile.block_third_party_cookies: true
 
 extensions:
   - name: Honey
