@@ -1,0 +1,10 @@
+python3 - <<'PY'
+from selenium import webdriver
+from selenium.webdriver.safari.options import Options
+
+print("Starting Safari...")
+driver = webdriver.Safari(options=Options())
+driver.get("https://example.com")
+print("Safari title:", driver.title)
+driver.quit()
+PY
