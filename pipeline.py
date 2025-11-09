@@ -6,6 +6,7 @@ import yaml
 
 from runner_firefox_manual import run_one as run_one_firefox
 from runner_chromium_manual import run_one as run_one_chromium
+from runner_safari_manual import run_one as run_safari
 
 CHROMIUM_FAMILY = ("chrome", "edge", "brave", "opera")
 
@@ -16,6 +17,8 @@ def resolve_extension_path(ext: dict, browser_name: str) -> str | None:
         return ext.get("firefox_path")
     if b in CHROMIUM_FAMILY:
         return ext.get("chromium_path")
+    if b == "safari":
+        return run_safari
     return None
 
 
